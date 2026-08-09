@@ -72,7 +72,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
         console.error("MAP_LOAD: Error calling setTerrain", e);
       }
 
-      // Activate sky/atmosphere
+      // Activate sky/atmosphere & fog
       try {
         if (typeof (map as any).setSky === "function") {
           (map as any).setSky({
@@ -87,6 +87,69 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
         }
       } catch (e) {
         console.error("MAP_LOAD: Error calling setSky", e);
+      }
+
+      try {
+        if (typeof (map as any).setFog === "function") {
+          (map as any).setFog({
+            "range": [0.5, 4.0],
+            "color": "#161210",
+            "horizon-blend": 0.35,
+            "high-color": "#0c0a09",
+            "space-color": "#090706",
+          });
+          console.log("MAP_LOAD: setFog configured successfully");
+        }
+      } catch (e) {
+        console.error("MAP_LOAD: Error calling setFog", e);
+      }
+
+      // Declutter Place Labels and de-emphasize minor structures/roads
+      try {
+        map.getStyle().layers.forEach((layer) => {
+          const id = layer.id.toLowerCase();
+          
+          // Sembunyikan label tempat kecil (village, hamlet, neighbourhood, suburb)
+          if (
+            id.includes("place_village") ||
+            id.includes("place_hamlet") ||
+            id.includes("place_suburb") ||
+            id.includes("place_neighbourhood") ||
+            id.includes("place_village-label") ||
+            id.includes("place_hamlet-label")
+          ) {
+            map.setLayoutProperty(layer.id, "visibility", "none");
+          }
+
+          // De-emphasize building footprints
+          if (id.includes("building")) {
+            try {
+              map.setPaintProperty(layer.id, "fill-opacity", 0.05);
+            } catch {}
+            try {
+              map.setPaintProperty(layer.id, "fill-extrusion-opacity", 0.05);
+            } catch {}
+          }
+
+          // De-emphasize minor roads/tracks
+          if (id.includes("road") || id.includes("path") || id.includes("track")) {
+            if (
+              id.includes("minor") ||
+              id.includes("service") ||
+              id.includes("residential") ||
+              id.includes("path") ||
+              id.includes("track") ||
+              id.includes("unclassified")
+            ) {
+              try {
+                map.setPaintProperty(layer.id, "line-opacity", 0.05);
+              } catch {}
+            }
+          }
+        });
+        console.log("MAP_LOAD: Layer filters applied successfully");
+      } catch (e) {
+        console.error("MAP_LOAD: Error configuring vector layer filters", e);
       }
     });
 
@@ -328,6 +391,15 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
     <div className="relative w-full h-full min-h-[500px]">
       {/* Map Container */}
       <div ref={mapContainerRef} className="w-full h-full absolute inset-0" />
+
+      {/* Cinematic Vignette Overlay */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          boxShadow: "inset 0 0 100px rgba(12, 10, 9, 0.85)",
+          zIndex: 5,
+        }}
+      />
 
       {/* Floating Header info */}
       {trailMeta && (
