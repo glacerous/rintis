@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS waypoints (
     lng DOUBLE PRECISION NOT NULL,
     elevation_m DOUBLE PRECISION,
     osm_node_id BIGINT,
+    osm_version INT,
+    osm_last_edited TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
