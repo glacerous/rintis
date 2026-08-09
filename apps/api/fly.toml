@@ -1,0 +1,21 @@
+# fly.toml app configuration file generated for rintis-api
+# Refer to https://fly.io/docs/reference/configuration/ for details
+
+app = "rintis-api"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
