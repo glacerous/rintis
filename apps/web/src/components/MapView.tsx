@@ -34,8 +34,8 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
       style: `https://api.maptiler.com/maps/outdoor/style.json?key=${maptilerKey}`,
       center: [110.44, -7.45], // Default near Gunung Merbabu
       zoom: 12,
-      pitch: 45, // Tilt for 3D look
-      bearing: -10,
+      pitch: 65, // Tilt for dramatic 3D look
+      bearing: -25, // Bearing rotation
       maxPitch: 85,
     });
 
@@ -61,7 +61,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
       // Activate terrain
       map.setTerrain({
         source: "terrain-rgb",
-        exaggeration: 1.5,
+        exaggeration: 2.2, // Increased exaggeration for dramatic 3D relief
       });
 
       // Add simple atmosphere sky layer if available in MapLibre
@@ -281,8 +281,8 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
           map.fitBounds(bounds, {
             padding: { top: 80, bottom: 80, left: 240, right: 80 }, // give padding for sidebar
             duration: 2500,
-            pitch: 50, // tilt to show 3D elevation
-            bearing: -15,
+            pitch: 65, // tilt to show dramatic 3D elevation
+            bearing: -25,
           });
         }
 
