@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     supabase_url: str
     supabase_service_role_key: str
+    firecrawl_api_key: str = ""
+    groq_api_key: str = ""
     port: int = 8080
     env: str = "development"
 
