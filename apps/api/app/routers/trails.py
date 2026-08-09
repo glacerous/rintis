@@ -99,6 +99,9 @@ async def get_trail(slug: str):
     """
     Retrieves the trail from Supabase and formats it + its waypoints
     into a GeoJSON FeatureCollection.
+
+    Each waypoint feature now includes a 'condition_reports' property array.
+    Top-level 'general_claims' contains reports not tied to any waypoint.
     """
     if not supabase_client:
         raise HTTPException(
@@ -113,7 +116,7 @@ async def get_trail(slug: str):
             status_code=404,
             detail=f"Trail with slug '{slug}' not found."
         )
-        
+
     trail = trail_res.data[0]
     trail_id = trail["id"]
 
@@ -121,7 +124,37 @@ async def get_trail(slug: str):
     wp_res = supabase_client.table("waypoints").select("*").eq("trail_id", trail_id).execute()
     waypoints = wp_res.data or []
 
-    # 3. Build GeoJSON FeatureCollection
+    # 3. Fetch all condition_reports for this trail (one query, split in Python)
+    cr_res = (
+        supabase_client
+        .table("condition_reports")
+        .select("waypoint_id, claim_text, claim_type, confidence_score, source_url, source_type, published_or_scraped_at, status")
+        .eq("trail_id", trail_id)
+        .order("confidence_score", desc=True)
+        .execute()
+    )
+    all_reports = cr_res.data or []
+
+    # Index reports by waypoint_id for quick lookup
+    reports_by_waypoint: dict[str, list] = {}
+    general_claims: list = []
+    for r in all_reports:
+        wp_id = r.get("waypoint_id")
+        entry = {
+            "claim_text": r["claim_text"],
+            "claim_type": r["claim_type"],
+            "confidence_score": r["confidence_score"],
+            "source_url": r["source_url"],
+            "source_type": r["source_type"],
+            "published_or_scraped_at": r["published_or_scraped_at"],
+            "status": r["status"],
+        }
+        if wp_id:
+            reports_by_waypoint.setdefault(wp_id, []).append(entry)
+        else:
+            general_claims.append(entry)
+
+    # 4. Build GeoJSON FeatureCollection
     features = []
 
     # Add Route LineString feature
@@ -136,8 +169,9 @@ async def get_trail(slug: str):
         }
     })
 
-    # Add Waypoint Point features
+    # Add Waypoint Point features (with embedded condition_reports)
     for wp in waypoints:
+        wp_id = wp["id"]
         features.append({
             "type": "Feature",
             "geometry": {
@@ -146,16 +180,18 @@ async def get_trail(slug: str):
             },
             "properties": {
                 "type": "waypoint",
-                "waypoint_type": wp["type"], # pos, camp, water_source, peak, trailhead
+                "waypoint_type": wp["type"],
                 "name": wp["name"],
                 "elevation_m": wp["elevation_m"],
                 "osm_node_id": wp["osm_node_id"],
                 "osm_version": wp.get("osm_version"),
-                "osm_last_edited": wp.get("osm_last_edited")
+                "osm_last_edited": wp.get("osm_last_edited"),
+                "condition_reports": reports_by_waypoint.get(wp_id, []),
             }
         })
 
     return {
         "type": "FeatureCollection",
-        "features": features
+        "features": features,
+        "general_claims": general_claims,   # trail-level claims (waypoint_id IS NULL)
     }
