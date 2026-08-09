@@ -124,9 +124,6 @@ async def add_condition_sources(slug: str, payload: ConditionSourcesRequest):
             if published_at is None:
                 published_at = datetime.now(timezone.utc)
 
-            # Fetch OSM staleness for the matched waypoint (optional signal)
-            osm_last_edited = _get_osm_last_edited(waypoint_id)
-
             # Compute confidence
             score = compute_confidence(
                 source_type=payload.source_type,
@@ -134,7 +131,7 @@ async def add_condition_sources(slug: str, payload: ConditionSourcesRequest):
                 claim_type=claim_type,
                 waypoint_id=waypoint_id,
                 trail_id=trail_id,
-                osm_last_edited=osm_last_edited,
+                current_source_url=url,
             )
 
             rows_to_insert.append({
@@ -181,22 +178,3 @@ async def add_condition_sources(slug: str, payload: ConditionSourcesRequest):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_osm_last_edited(waypoint_id: Optional[str]) -> Optional[str]:
-    """Fetch osm_last_edited for a waypoint; returns None on any failure."""
-    if not waypoint_id or not supabase_client:
-        return None
-    try:
-        res = (
-            supabase_client
-            .table("waypoints")
-            .select("osm_last_edited")
-            .eq("id", waypoint_id)
-            .limit(1)
-            .execute()
-        )
-        if res.data:
-            return res.data[0].get("osm_last_edited")
-    except Exception:
-        pass
-    return None

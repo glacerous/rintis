@@ -53,7 +53,7 @@ def compute_confidence(
     claim_type: str,
     waypoint_id: Optional[str],
     trail_id: str,
-    osm_last_edited: Optional[str] = None,
+    current_source_url: str,
 ) -> float:
     """
     Compute a [0, 1] confidence score for a condition report.
@@ -65,7 +65,7 @@ def compute_confidence(
     claim_type            : one of the condition_reports.claim_type enum values
     waypoint_id           : UUID of the matched waypoint, or None (general claim)
     trail_id              : UUID of the parent trail (needed for corroboration query)
-    osm_last_edited       : ISO 8601 string from waypoints.osm_last_edited (optional)
+    current_source_url    : The URL of the report currently being scored
 
     Returns
     -------
@@ -73,15 +73,10 @@ def compute_confidence(
     """
     s1 = _source_type_score(source_type)
     s2 = _recency_decay(published_or_scraped_at)
-    s3 = _corroboration(claim_type, waypoint_id, trail_id)
+    s3 = _corroboration(claim_type, waypoint_id, trail_id, current_source_url)
     s4 = _track_record(source_type)
 
     score = W1 * s1 + W2 * s2 + W3 * s3 + W4 * s4
-
-    # Optional: minor penalty for very stale OSM waypoint data (max -0.05).
-    # This is an additive signal, not a gate — it can never push the score below 0.
-    if osm_last_edited:
-        score -= _osm_staleness_penalty(osm_last_edited)
 
     return round(max(0.0, min(1.0, score)), 4)
 
@@ -113,13 +108,14 @@ def _corroboration(
     claim_type: str,
     waypoint_id: Optional[str],
     trail_id: str,
+    current_source_url: str,
 ) -> float:
     """
     Log-scaled corroboration: how many other condition_reports share the same
-    claim_type + waypoint_id (or trail-level if waypoint_id is None) within
-    CORROBORATION_WINDOW_DAYS days.
+    claim_type + waypoint_id (or trail-level if waypoint_id is None) from
+    DISTINCT source URLs (excluding the current URL) within CORROBORATION_WINDOW_DAYS days.
 
-    Uses log(1 + count) / log(1 + CAP) for diminishing returns.
+    Uses log(1 + distinct_count) / log(1 + CAP) for diminishing returns.
     Returns 0.0 if the Supabase query fails (non-fatal).
     """
     if not supabase_client:
@@ -131,12 +127,14 @@ def _corroboration(
             datetime.now(timezone.utc) - timedelta(days=CORROBORATION_WINDOW_DAYS)
         ).isoformat()
 
+        # Select the source_url of matching reports to calculate distinct count
         query = (
             supabase_client
             .table("condition_reports")
-            .select("id", count="exact")
+            .select("source_url")
             .eq("trail_id", trail_id)
             .eq("claim_type", claim_type)
+            .neq("source_url", current_source_url)
             .gte("published_or_scraped_at", cutoff)
         )
         if waypoint_id:
@@ -145,7 +143,9 @@ def _corroboration(
             query = query.is_("waypoint_id", "null")
 
         res = query.execute()
-        count = res.count or 0
+        unique_urls = {r["source_url"] for r in res.data} if res.data else set()
+        count = len(unique_urls)
+        
         return math.log(1 + count) / math.log(1 + CORROBORATION_CAP)
     except Exception as exc:
         print(f"[Confidence] Corroboration query failed: {exc}")
@@ -162,20 +162,3 @@ def _track_record(source_type: str) -> float:
     """
     _ = source_type
     return 0.5
-
-
-def _osm_staleness_penalty(osm_last_edited: str) -> float:
-    """
-    Optional minor penalty when a waypoint's OSM data is very stale (> 2 years).
-    Maximum deduction: 0.05.  This is a rough proxy, not a hard gate.
-    """
-    try:
-        edited = datetime.fromisoformat(osm_last_edited.replace("Z", "+00:00"))
-        days_stale = (datetime.now(timezone.utc) - edited).total_seconds() / 86400
-        years_stale = days_stale / 365
-        if years_stale < 2:
-            return 0.0
-        # Linear from 0 at 2 years to max 0.05 at 4+ years
-        return min(0.05, (years_stale - 2) / 2 * 0.05)
-    except Exception:
-        return 0.0
