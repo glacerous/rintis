@@ -52,7 +52,8 @@ rintis/
 ### 1. Inisialisasi Database (Supabase)
 1. Buat proyek baru di [Supabase Dashboard](https://supabase.com/).
 2. Buka menu **SQL Editor** pada dashboard Supabase Anda.
-3. Salin isi file `apps/api/migrations/0001_init.sql` dan jalankan query tersebut untuk membuat tabel `trails` dan `waypoints`.
+3. Jalankan SQL dari file `apps/api/migrations/0001_init.sql` untuk membuat tabel `trails` dan `waypoints`.
+4. Jalankan SQL dari file `apps/api/migrations/0002_conditions.sql` untuk membuat tabel `condition_reports` dan `scrape_cache`.
 
 ### 2. Setup Backend API (`apps/api`)
 1. Buka terminal baru dan masuk ke folder API:
@@ -78,9 +79,11 @@ rintis/
    ```bash
    cp .env.example .env
    ```
-5. Isi variabel environment di file `.env` dengan kredensial dari project Supabase Anda (Settings -> API):
+5. Isi variabel environment di file `.env` dengan kredensial dari project Supabase, Firecrawl, dan Groq Anda:
    * `SUPABASE_URL`: API URL Supabase Anda.
-   * `SUPABASE_SERVICE_ROLE_KEY`: Service role secret key (JANGAN dipublikasikan).
+   * `SUPABASE_SERVICE_ROLE_KEY`: Service role secret key Supabase.
+   * `FIRECRAWL_API_KEY`: API Key dari [Firecrawl](https://firecrawl.dev).
+   * `GROQ_API_KEY`: API Key dari [Groq Console](https://console.groq.com).
 6. Jalankan server backend lokal:
    ```bash
    uvicorn app.main:app --reload --port 8000
@@ -109,7 +112,28 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8000/api/trails/import-osm
 
 Endpoint ini akan menarik jalur (LineString) dan secara otomatis mencari pos/camp/sumber air di sekitar jalur dalam radius 500 meter, lalu menyimpannya ke Supabase.
 
-### 4. Setup Frontend Web (`apps/web`)
+### 4. Import Laporan Kondisi (Scrape & LLM Pipeline - Stage 2)
+Untuk mengisi laporan kondisi pendakian (misal cuaca, hazard, penutupan jalur) dari sumber artikel berita, postingan komunitas, atau pengumuman pemerintah, panggil endpoint berikut:
+
+* **Endpoint**: `POST http://localhost:8000/api/trails/{slug}/condition-sources` (ganti `{slug}` dengan `gunung-merbabu-selo`)
+* **Headers**: `Content-Type: application/json`
+* **Body**:
+  ```json
+  {
+    "urls": [
+      "https://example.com/berita-merbabu-cuaca-buruk",
+      "https://example.com/laporan-jalur-selo-longsor"
+    ],
+    "source_type": "established_media",
+    "force_refresh": false
+  }
+  ```
+
+*Pilihan `source_type`*: `official_govt` | `established_media` | `verified_community` | `individual_post`
+
+Sistem akan otomatis meng-cache konten (tidak mengulang scrape dalam 24 jam kecuali `force_refresh: true`), memproses teks mentah menggunakan LLM Groq (`openai/gpt-oss-120b` dengan schema terstruktur), mencocokkan pos/waypoint secara fuzzy, menghitung confidence score, dan menyimpannya.
+
+### 5. Setup Frontend Web (`apps/web`)
 1. Buka terminal baru dan masuk ke folder web:
    ```bash
    cd apps/web
@@ -129,7 +153,7 @@ Endpoint ini akan menarik jalur (LineString) dan secara otomatis mencari pos/cam
    ```bash
    npm run dev
    ```
-6. Buka browser Anda di `http://localhost:3000`. Peta 3D terrain akan memuat rute Gunung Merbabu berserta marker waypoint yang interaktif (bisa diklik untuk melihat informasi).
+6. Buka browser Anda di `http://localhost:3000`. Peta 3D terrain akan memuat rute Gunung Merbabu berserta marker waypoint yang interaktif. Klik pos yang memiliki laporan kondisi untuk melihat ringkasan kondisi dan badge persentase confidence.
 
 ---
 
@@ -151,9 +175,9 @@ Deployment API backend dikelola menggunakan Fly.io sesuai dengan instruksi konfi
    ```
    *Ikuti petunjuk di terminal, beri nama aplikasi Anda (misal `rintis-api`) dan pilih region terdekat (misal `sin` - Singapura).*
 
-4. Set environment secrets (kredensial Supabase) ke Fly.io:
+4. Set environment secrets (kredensial Supabase, Firecrawl, & Groq) ke Fly.io:
    ```bash
-   fly secrets set SUPABASE_URL="https://your-supabase-project.supabase.co" SUPABASE_SERVICE_ROLE_KEY="your-service-role-key"
+   fly secrets set SUPABASE_URL="https://your-supabase-project.supabase.co" SUPABASE_SERVICE_ROLE_KEY="your-service-role-key" FIRECRAWL_API_KEY="your-firecrawl-key" GROQ_API_KEY="your-groq-key"
    ```
 5. Deploy aplikasi:
    ```bash
