@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str
     firecrawl_api_key: str = ""
     groq_api_key: str = ""
+    tinyfish_api_key: str = ""
     port: int = 8080
     env: str = "development"
 
