@@ -15,6 +15,10 @@ module.exports = {
           primary: "#10b981", // emerald
           accent: "#f59e0b", // amber
         }
+      },
+      fontFamily: {
+        sans: ["var(--font-sans)", "sans-serif"],
+        serif: ["var(--font-serif)", "serif"],
       }
     },
   },

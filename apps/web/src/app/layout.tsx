@@ -1,5 +1,19 @@
 import type { Metadata } from "next";
+import { DM_Sans, Cormorant_Garamond } from "next/font/google";
 import "./globals.css";
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans",
+});
+
+const cormorantGaramond = Cormorant_Garamond({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-serif",
+});
 
 export const metadata: Metadata = {
   title: "Rintis - 3D Terrain Hiking Decision-Support",
@@ -13,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased min-h-screen bg-slate-950 text-slate-50">
+      <body className={`${dmSans.variable} ${cormorantGaramond.variable} antialiased min-h-screen bg-zinc-950 text-slate-50 font-sans`}>
         {children}
       </body>
     </html>
