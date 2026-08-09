@@ -4,6 +4,29 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
 import Navbar from "@/components/Navbar";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+
+// ── Custom Tooltip for Elevation Profile Chart ────────────────────────────────
+const CustomTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    return (
+      <div
+        style={{
+          backgroundColor: "#110f0d",
+          border: "1px solid rgba(240, 237, 230, 0.15)",
+          padding: "6px 10px",
+          borderRadius: "2px",
+          fontSize: "10px",
+          fontFamily: "var(--font-sans)",
+        }}
+      >
+        <div style={{ color: "rgba(240, 237, 230, 0.5)", fontWeight: 500 }}>{payload[0].payload.name}</div>
+        <div style={{ color: "#E55B3C", fontWeight: 700, marginTop: "2px" }}>{payload[0].value} mdpl</div>
+      </div>
+    );
+  }
+  return null;
+};
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Home() {
@@ -54,22 +77,55 @@ export default function Home() {
     fetchTrailInfo();
   }, [activeSlug, apiUrl]);
 
+  // Extract chart data
+  const elevationData = waypoints
+    .filter((wp) => wp.elevation_m)
+    .map((wp) => ({
+      name: wp.name,
+      elevation: wp.elevation_m,
+    }));
+
   // Render Sidebar content
   const renderSidebarContent = () => (
     <>
-      {/* Trail Info */}
-      <div style={{ padding: "0 0 2rem", borderBottom: "1px solid rgba(240, 237, 230, 0.08)" }}>
-        <span style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#E55B3C" }}>
+      {/* Rich Trail Info Header */}
+      <div
+        style={{
+          padding: "24px 24px 28px",
+          borderBottom: "1px solid rgba(240, 237, 230, 0.08)",
+          margin: "-24px -24px 0",
+          backgroundImage: "radial-gradient(rgba(240, 237, 230, 0.1) 1px, transparent 1px)",
+          backgroundSize: "16px 16px",
+          backgroundColor: "rgba(12, 11, 9, 0.35)",
+        }}
+      >
+        <span style={{ fontSize: "9px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#E55B3C" }}>
           Jalur Pendakian
         </span>
         {trailMeta ? (
-          <div style={{ marginTop: "8px" }}>
-            <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#f0ede6", letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+          <div style={{ marginTop: "10px" }}>
+            <h2 style={{ fontSize: "26px", fontWeight: 400, color: "#f0ede6", fontFamily: "var(--font-serif)", fontStyle: "italic", letterSpacing: "-0.01em", lineHeight: 1.15 }}>
               {trailMeta.name}
             </h2>
-            <p style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.5)", marginTop: "4px" }}>
+            <p style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.5)", marginTop: "4px", fontWeight: 500, letterSpacing: "0.02em" }}>
               {trailMeta.region}
             </p>
+
+            {/* Trail Stats Badges */}
+            <div style={{ display: "flex", gap: "16px", marginTop: "20px", borderTop: "1px solid rgba(240, 237, 230, 0.08)", paddingTop: "16px" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "8px", fontWeight: 600, color: "rgba(240, 237, 230, 0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Jarak</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>8.9 km</div>
+              </div>
+              <div style={{ flex: 1, borderLeft: "1px solid rgba(240, 237, 230, 0.08)", paddingLeft: "16px" }}>
+                <div style={{ fontSize: "8px", fontWeight: 600, color: "rgba(240, 237, 230, 0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Durasi</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>5-6 Jam</div>
+              </div>
+              <div style={{ flex: 1, borderLeft: "1px solid rgba(240, 237, 230, 0.08)", paddingLeft: "16px" }}>
+                <div style={{ fontSize: "8px", fontWeight: 600, color: "rgba(240, 237, 230, 0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Waypoint</div>
+                <div style={{ fontSize: "14px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>{waypoints.length} Pos</div>
+              </div>
+            </div>
           </div>
         ) : (
           <div style={{ marginTop: "8px" }}>
@@ -79,6 +135,43 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Mini Elevation Profile (Only rendered if data exists) */}
+      {elevationData.length > 1 && (
+        <div style={{ padding: "2rem 0 1.5rem", borderBottom: "1px solid rgba(240, 237, 230, 0.08)" }}>
+          <div style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "rgba(240, 237, 230, 0.4)", marginBottom: "1rem" }}>
+            Profil Elevasi Rute
+          </div>
+          <div style={{ width: "100%", height: "100px", marginTop: "10px" }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={elevationData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
+                <defs>
+                  <linearGradient id="colorElevation" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#E55B3C" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#E55B3C" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="name" hide />
+                <YAxis
+                  domain={["dataMin - 100", "dataMax + 100"]}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: "rgba(240, 237, 230, 0.4)", fontSize: 8, fontFamily: "var(--font-sans)" }}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Area
+                  type="monotone"
+                  dataKey="elevation"
+                  stroke="#E55B3C"
+                  strokeWidth={1.5}
+                  fillOpacity={1}
+                  fill="url(#colorElevation)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* Auto-Discovery Section (Navigates to full page /app/discovery) */}
       <div
