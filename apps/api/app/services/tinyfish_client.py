@@ -71,60 +71,96 @@ def discover_sources(trail_name: str, region: Optional[str] = None) -> list[str]
 
         region_tag = f" {region}" if region else ""
 
-        # Two targeted queries using include_domains (NOT site: operators — they conflict):
-        # 1. Official/media sources — authoritative condition updates
-        # 2. Community sources — trip reports and forum posts
-        OFFICIAL_MEDIA_DOMAINS = [
-            "tngunungmerbabu.org", "go.id",
+        # Define domains by category
+        GOVT_DOMAINS = ["tngunungmerbabu.org", "go.id"]
+        MEDIA_DOMAINS = [
             "detik.com", "kompas.com", "tempo.co", "idntimes.com",
             "kumparan.com", "tribunnews.com", "liputan6.com",
-            "merdeka.com", "cnnindonesia.com", "antaranews.com",
+            "merdeka.com", "cnnindonesia.com", "antaranews.com"
         ]
         COMMUNITY_DOMAINS = [
             "kompasiana.com", "kaskus.co.id",
-            "backpackerindonesia.com", "mounture.com",
+            "backpackerindonesia.com", "mounture.com"
         ]
 
-        queries = [
-            (
-                f"kondisi jalur pendakian {trail_name}{region_tag} terbaru",
-                OFFICIAL_MEDIA_DOMAINS,
-            ),
-            (
-                f"laporan pendakian {trail_name}{region_tag} kondisi jalur terbaru",
-                COMMUNITY_DOMAINS,
-            ),
+        # 3 targeted query configurations
+        categories = [
+            {
+                "name": "Official/Govt",
+                "query": f"pengumuman informasi pendakian {trail_name}{region_tag}",
+                "domains": GOVT_DOMAINS,
+                "target_share": 3,
+                "urls": []
+            },
+            {
+                "name": "Established Media",
+                "query": f"kondisi jalur pendakian {trail_name}{region_tag} terbaru",
+                "domains": MEDIA_DOMAINS,
+                "target_share": 4,
+                "urls": []
+            },
+            {
+                "name": "Community/Forums",
+                "query": f"catatan perjalanan pendakian {trail_name}{region_tag} info jalur",
+                "domains": COMMUNITY_DOMAINS,
+                "target_share": 3,
+                "urls": []
+            }
         ]
 
-        seen: set[str] = set()
-        discovered_urls: list[str] = []
-
-        for i, (query_str, domains) in enumerate(queries):
+        # Run queries and classify results
+        for cat in categories:
             try:
                 response = client.search.query(
-                    query=query_str,
-                    include_domains=domains,
+                    query=cat["query"],
+                    include_domains=cat["domains"]
                 )
                 batch = getattr(response, "results", [])
-                print(f"[TinyFish] Query {i+1}: '{query_str[:60]}' -> {len(batch)} results")
-
-                for result in batch:
-                    url = getattr(result, "url", None)
-                    if url and url not in seen and is_allowed_domain(url):
-                        seen.add(url)
-                        discovered_urls.append(url)
-                        title = getattr(result, "title", "")
-                        print(f"  + [{len(discovered_urls):02d}] {title[:60]} — {url[:80]}")
-
+                print(f"[TinyFish] Category '{cat['name']}' -> {len(batch)} results")
+                
+                for r in batch:
+                    url = getattr(r, "url", None)
+                    if url and is_allowed_domain(url):
+                        cat["urls"].append(url)
             except Exception as e:
-                print(f"[TinyFish] Query {i+1} failed: {e}")
-                # Don't abort — try remaining queries
+                print(f"[TinyFish] Category '{cat['name']}' query failed: {e}")
 
-        print(f"[TinyFish] Discovery complete: {len(discovered_urls)} unique allowed URLs found.")
-        return discovered_urls[:10]
+        # Interleave and merge with target share limits
+        final_urls = []
+        seen = set()
+
+        # Step 1: Fill up to target shares
+        for cat in categories:
+            added = 0
+            for url in cat["urls"]:
+                if url not in seen:
+                    seen.add(url)
+                    final_urls.append(url)
+                    added += 1
+                    if added >= cat["target_share"]:
+                        break
+
+        # Step 2: Fill any remaining capacity up to 10 from leftovers
+        if len(final_urls) < 10:
+            for cat in categories:
+                for url in cat["urls"]:
+                    if url not in seen:
+                        seen.add(url)
+                        final_urls.append(url)
+                        if len(final_urls) >= 10:
+                            break
+                if len(final_urls) >= 10:
+                    break
+
+        print(f"[TinyFish] Balanced discovery complete: {len(final_urls)} unique URLs selected.")
+        for idx, url in enumerate(final_urls):
+            print(f"  [{idx+1:02d}] {url}")
+            
+        return final_urls[:10]
 
     except Exception as e:
         print(f"[TinyFish] Client initialization or fatal error: {e}")
         raise e
+
 
 
