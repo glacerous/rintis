@@ -64,14 +64,16 @@ async def import_osm_trail(payload: TrailImportRequest):
             waypoint_rows = []
             for wp in waypoints:
                 waypoint_rows.append({
-                    "trail_id": trail_id,
-                    "name": wp["name"],
-                    "type": wp["type"],
-                    "lat": wp["lat"],
-                    "lng": wp["lng"],
-                    "elevation_m": wp["elevation_m"],
-                    "osm_node_id": wp["osm_node_id"]
-                })
+                "trail_id": trail_id,
+                "name": wp["name"],
+                "type": wp["type"],
+                "lat": wp["lat"],
+                "lng": wp["lng"],
+                "elevation_m": wp["elevation_m"],
+                "osm_node_id": wp["osm_node_id"],
+                "osm_version": wp.get("osm_version"),
+                "osm_last_edited": wp.get("osm_last_edited")
+            })
             
             # Insert in chunks if there are too many (Supabase might have payload limits)
             # Typically 13 is very small and fits in 1 insert call.
@@ -147,7 +149,9 @@ async def get_trail(slug: str):
                 "waypoint_type": wp["type"], # pos, camp, water_source, peak, trailhead
                 "name": wp["name"],
                 "elevation_m": wp["elevation_m"],
-                "osm_node_id": wp["osm_node_id"]
+                "osm_node_id": wp["osm_node_id"],
+                "osm_version": wp.get("osm_version"),
+                "osm_last_edited": wp.get("osm_last_edited")
             }
         })
 
