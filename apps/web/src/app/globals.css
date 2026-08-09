@@ -39,40 +39,40 @@ body {
 }
 
 .maplibregl-popup-content {
-  background: rgba(30, 41, 59, 0.9) !important;
+  background: rgba(17, 15, 13, 0.95) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  color: #f8fafc !important;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 12px !important;
+  color: #f0ede6 !important;
+  border: 1px solid rgba(240, 237, 230, 0.08);
+  border-radius: 2px !important;
   padding: 14px 16px !important;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5) !important;
 }
 
 .maplibregl-popup-anchor-top .maplibregl-popup-tip {
-  border-bottom-color: rgba(30, 41, 59, 0.9) !important;
+  border-bottom-color: rgba(17, 15, 13, 0.95) !important;
 }
 .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
-  border-top-color: rgba(30, 41, 59, 0.9) !important;
+  border-top-color: rgba(17, 15, 13, 0.95) !important;
 }
 .maplibregl-popup-anchor-left .maplibregl-popup-tip {
-  border-right-color: rgba(30, 41, 59, 0.9) !important;
+  border-right-color: rgba(17, 15, 13, 0.95) !important;
 }
 .maplibregl-popup-anchor-right .maplibregl-popup-tip {
-  border-left-color: rgba(30, 41, 59, 0.9) !important;
+  border-left-color: rgba(17, 15, 13, 0.95) !important;
 }
 
 .maplibregl-popup-close-button {
-  color: #94a3b8 !important;
+  color: #a8a29e !important;
   padding: 4px 8px !important;
-  font-size: 16px !important;
-  border-radius: 0 10px 0 0 !important;
+  font-size: 14px !important;
+  border-radius: 0 !important;
   transition: color 0.2s, background-color 0.2s;
 }
 
 .maplibregl-popup-close-button:hover {
-  color: #f8fafc !important;
-  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #f0ede6 !important;
+  background-color: rgba(240, 237, 230, 0.08) !important;
 }
 
 /* Custom Marker Hover effects */
@@ -84,4 +84,35 @@ body {
 .custom-marker:hover {
   transform: scale(1.3) translateY(-2px);
   filter: drop-shadow(0 0 8px currentColor);
+}
+
+/* ── STYLE MAPLIBRE DEFAULT CONTROLS ── */
+.maplibregl-ctrl-group {
+  background-color: rgba(17, 15, 13, 0.95) !important;
+  border: 1px solid rgba(240, 237, 230, 0.08) !important;
+  border-radius: 2px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+  overflow: hidden;
+}
+
+.maplibregl-ctrl-group button {
+  width: 32px !important;
+  height: 32px !important;
+  border-bottom: 1px solid rgba(240, 237, 230, 0.06) !important;
+  background-color: transparent !important;
+  color: #f0ede6 !important;
+  transition: background-color 0.2s ease;
+}
+
+.maplibregl-ctrl-group button:last-child {
+  border-bottom: none !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+  background-color: rgba(240, 237, 230, 0.08) !important;
+}
+
+/* Invert control SVGs to match white text */
+.maplibregl-ctrl-icon {
+  filter: invert(1) brightness(0.9) !important;
 }

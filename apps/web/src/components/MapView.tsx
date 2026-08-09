@@ -31,7 +31,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
     // Initialize MapLibre
     const map = new maplibregl.Map({
       container: mapContainerRef.current,
-      style: `https://api.maptiler.com/maps/outdoor/style.json?key=${maptilerKey}`,
+      style: `https://api.maptiler.com/maps/outdoor-v4-dark/style.json?key=${maptilerKey}`,
       center: [110.44, -7.45], // Default near Gunung Merbabu
       zoom: 12,
       pitch: 65, // Tilt for dramatic 3D look
@@ -70,6 +70,23 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
         console.log("MAP_LOAD: setTerrain called successfully, current terrain:", map.getTerrain());
       } catch (e) {
         console.error("MAP_LOAD: Error calling setTerrain", e);
+      }
+
+      // Activate sky/atmosphere
+      try {
+        if (typeof (map as any).setSky === "function") {
+          (map as any).setSky({
+            "sky-color": "#161210",
+            "sky-horizon-blend": 0.4,
+            "horizon-color": "#3d2e24",
+            "horizon-fog-blend": 0.6,
+            "fog-color": "#120e0b",
+            "fog-ground-blend": 0.5,
+          });
+          console.log("MAP_LOAD: setSky configured successfully");
+        }
+      } catch (e) {
+        console.error("MAP_LOAD: Error calling setSky", e);
       }
     });
 
@@ -134,7 +151,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
               "line-cap": "round",
             },
             paint: {
-              "line-color": "#10b981", // Emerald green glow
+              "line-color": "#E55B3C", // Coral orange glow
               "line-width": 8,
               "line-opacity": 0.35,
             },
@@ -150,7 +167,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
               "line-cap": "round",
             },
             paint: {
-              "line-color": "#34d399", // Mint green
+              "line-color": "#F38165", // Warm light coral core
               "line-width": 4.5,
               "line-opacity": 0.95,
             },
@@ -182,13 +199,13 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
             symbol = "▲";
           } else if (waypoint_type === "camp") {
             markerColor = "#f97316"; // Orange/Amber
-            symbol = "⛺";
+            symbol = "C";
           } else if (waypoint_type === "water_source") {
             markerColor = "#06b6d4"; // Cyan
-            symbol = "💧";
+            symbol = "W";
           } else if (waypoint_type === "trailhead") {
-            markerColor = "#10b981"; // Emerald
-            symbol = "🏁";
+            markerColor = "#E55B3C"; // Coral orange
+            symbol = "T";
           }
 
           markerEl.style.backgroundColor = markerColor;
@@ -229,7 +246,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
                         <span class="text-[7px] text-slate-500 font-bold uppercase">${sourceLabel} • ${dateStr}</span>
                       </div>
                       <div class="text-slate-200 font-normal">${r.claim_text}</div>
-                      <a href="${r.source_url}" target="_blank" rel="noopener noreferrer" class="text-[8px] text-emerald-400 hover:underline block mt-0.5 pointer-events-auto">Buka Sumber ↗</a>
+                      <a href="${r.source_url}" target="_blank" rel="noopener noreferrer" class="text-[8px] text-[#E55B3C] hover:underline block mt-0.5 pointer-events-auto">Buka Sumber ↗</a>
                     </div>
                   `;
                 }).join("")}
@@ -242,7 +259,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
             <div class="flex flex-col select-none w-56">
               <span class="text-[9px] tracking-widest font-black uppercase text-slate-400 mb-0.5">${waypoint_type}</span>
               <span class="text-sm font-extrabold text-slate-100 leading-tight mb-1">${name}</span>
-              ${elevation_m ? `<span class="text-xs text-emerald-400 font-semibold">Elevasi: ${elevation_m} mdpl</span>` : ""}
+              ${elevation_m ? `<span class="text-xs text-[#E55B3C] font-semibold">Elevasi: ${elevation_m} mdpl</span>` : ""}
               ${reportsHtml}
             </div>
           `;
@@ -342,26 +359,37 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
       )}
 
       {/* Map Legend */}
-      <div className="absolute bottom-4 right-4 z-10 glass-panel px-3 py-2 rounded-xl text-[11px] shadow-lg flex flex-col gap-1.5 pointer-events-none select-none text-slate-300">
-        <div className="font-extrabold uppercase text-[9px] text-slate-400 tracking-wider mb-0.5">Legenda Peta</div>
-        <div className="flex items-center gap-2">
-          <span className="w-3.5 h-3.5 rounded-full bg-red-500 border border-slate-900 flex items-center justify-center text-[8px]">▲</span>
+      <div
+        className="absolute bottom-4 right-4 z-10 text-[11px] shadow-2xl flex flex-col gap-2.5 pointer-events-none select-none text-slate-300"
+        style={{
+          backgroundColor: "rgba(17, 15, 13, 0.95)",
+          backdropFilter: "blur(10px)",
+          border: "1px solid rgba(240, 237, 230, 0.08)",
+          borderRadius: "2px",
+          padding: "16px 20px",
+        }}
+      >
+        <div style={{ fontFamily: "var(--font-sans)", fontSize: "9px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#E55B3C", marginBottom: "2px" }}>
+          Legenda Peta
+        </div>
+        <div className="flex items-center gap-2.5" style={{ fontFamily: "var(--font-sans)", fontSize: "11px", fontWeight: 500, color: "rgba(240, 237, 230, 0.8)" }}>
+          <span className="w-4 h-4 rounded-full bg-red-500 border border-slate-950 flex items-center justify-center text-[7px] font-black text-white shrink-0">▲</span>
           <span>Puncak Gunung</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3.5 h-3.5 rounded-full bg-orange-500 border border-slate-900 flex items-center justify-center text-[8px]">⛺</span>
+        <div className="flex items-center gap-2.5" style={{ fontFamily: "var(--font-sans)", fontSize: "11px", fontWeight: 500, color: "rgba(240, 237, 230, 0.8)" }}>
+          <span className="w-4 h-4 rounded-full bg-orange-500 border border-slate-950 flex items-center justify-center text-[7.5px] font-black text-white shrink-0">C</span>
           <span>Camp Site / Sabana</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3.5 h-3.5 rounded-full bg-cyan-500 border border-slate-900 flex items-center justify-center text-[8px]">💧</span>
+        <div className="flex items-center gap-2.5" style={{ fontFamily: "var(--font-sans)", fontSize: "11px", fontWeight: 500, color: "rgba(240, 237, 230, 0.8)" }}>
+          <span className="w-4 h-4 rounded-full bg-cyan-500 border border-slate-950 flex items-center justify-center text-[7.5px] font-black text-white shrink-0">W</span>
           <span>Sumber Air</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 border border-slate-900 flex items-center justify-center text-[8px]">🏁</span>
+        <div className="flex items-center gap-2.5" style={{ fontFamily: "var(--font-sans)", fontSize: "11px", fontWeight: 500, color: "rgba(240, 237, 230, 0.8)" }}>
+          <span className="w-4 h-4 rounded-full bg-[#E55B3C] border border-slate-950 flex items-center justify-center text-[7.5px] font-black text-white shrink-0">T</span>
           <span>Basecamp / Trailhead</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3.5 h-3.5 rounded-full bg-indigo-500 border border-slate-900 flex items-center justify-center text-[8px]">P</span>
+        <div className="flex items-center gap-2.5" style={{ fontFamily: "var(--font-sans)", fontSize: "11px", fontWeight: 500, color: "rgba(240, 237, 230, 0.8)" }}>
+          <span className="w-4 h-4 rounded-full bg-indigo-500 border border-slate-950 flex items-center justify-center text-[7.5px] font-black text-white shrink-0">P</span>
           <span>Pos / Informasi</span>
         </div>
       </div>
