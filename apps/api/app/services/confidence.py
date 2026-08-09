@@ -21,18 +21,18 @@ from typing import Optional
 from app.database import supabase_client
 
 # ── Tunable weights ───────────────────────────────────────────────────────────
-W1 = 0.40  # source_type_score weight
-W2 = 0.25  # recency_decay weight
-W3 = 0.25  # corroboration weight
+W1 = 0.50  # source_type_score weight (increased for higher authority impact)
+W2 = 0.20  # recency_decay weight
+W3 = 0.20  # corroboration weight
 W4 = 0.10  # track_record weight
 
-# Recency decay rate.  λ=0.05 means a 14-day-old report retains ~50% of its
-# recency score; a 1-day-old report retains ~95%.  Increase λ to decay faster.
-RECENCY_LAMBDA = 0.05
+# Recency decay rate.  λ=0.01 means a 30-day-old report retains ~74% of its
+# recency score; a 60-day-old report retains ~55%.
+RECENCY_LAMBDA = 0.01
 
 # Corroboration: look for other reports with the same claim_type + waypoint_id
 # published within this window.
-CORROBORATION_WINDOW_DAYS = 7
+CORROBORATION_WINDOW_DAYS = 30
 
 # Normalisation cap for corroboration count (log-scaled diminishing return).
 # At CORROBORATION_CAP reports the score saturates at ~1.0.
@@ -156,13 +156,12 @@ def _track_record(source_type: str) -> float:
     """
     Track record of the source domain based on historical accuracy.
 
-    SIMPLIFICATION (MVP Stage 2): we default to 0.5 for all sources because
-    we do not yet have enough confirmed/disputed report data to build a real
-    truth-discovery model.  Replace this stub in Stage 3+ once historical data
-    accumulates and we can compute per-domain accuracy rates.
+    SIMPLIFICATION (MVP Stage 2): we default to 1.0 for official government
+    announcements and 0.5 for all other sources since we do not yet have
+    historical dispute data.
     """
-    # Future: look up source domain accuracy from a source_reputation table.
-    _ = source_type  # unused for now; kept as parameter for forward compatibility
+    if source_type == "official_govt":
+        return 1.0
     return 0.5
 
 
