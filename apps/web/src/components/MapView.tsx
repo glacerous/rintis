@@ -110,14 +110,9 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
           const id = layer.id.toLowerCase();
           
           // Sembunyikan label tempat kecil (village, hamlet, neighbourhood, suburb)
-          if (
-            id.includes("place_village") ||
-            id.includes("place_hamlet") ||
-            id.includes("place_suburb") ||
-            id.includes("place_neighbourhood") ||
-            id.includes("place_village-label") ||
-            id.includes("place_hamlet-label")
-          ) {
+          const isPlace = id.includes("place");
+          const isSmall = id.includes("village") || id.includes("hamlet") || id.includes("suburb") || id.includes("neighbourhood");
+          if (isPlace && isSmall) {
             map.setLayoutProperty(layer.id, "visibility", "none");
           }
 
