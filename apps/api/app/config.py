@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     firecrawl_api_key: str = ""
     groq_api_key: str = ""
     tinyfish_api_key: str = ""
+    assemblyai_api_key: str = ""
     port: int = 8080
     env: str = "development"
 

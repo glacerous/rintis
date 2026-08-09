@@ -5,6 +5,7 @@ WORKDIR /app
 # Install system dependencies if any are needed (e.g. git, curl for healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install python packages

@@ -18,6 +18,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 from urllib.parse import urlparse
 
+import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -37,6 +38,13 @@ class ConditionSourcesRequest(BaseModel):
     # Source type applies to all URLs in this batch — caller knows the domain provenance.
     source_type: str = "individual_post"
     force_refresh: bool = False
+
+
+class ConditionVideoSourcesRequest(BaseModel):
+    video_urls: list[str]
+    source_type: str = "individual_post"
+    force_refresh: bool = False
+
 
 
 # ── Domain → source_type inference ───────────────────────────────────────────
@@ -424,3 +432,202 @@ async def get_scrape_job(slug: str, job_id: str):
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found for this trail.")
 
     return job_res.data[0]
+
+
+# ── Core pipeline: single YouTube Video ───────────────────────────────────────
+
+def process_single_video(
+    url: str,
+    source_type: str,
+    trail_id: str,
+    force_refresh: bool = False,
+) -> dict:
+    """
+    Run the full pipeline for one YouTube Video URL:
+      extract audio via yt-dlp -> transcribe via AssemblyAI -> LLM resolve -> waypoint match -> confidence score -> DB persist.
+
+    Reuses scrape_cache table to store the raw transcripts.
+    Returns a result dict: { url, claims_saved, error, model_used }.
+    Raises NO exceptions — all errors are captured in the result dict.
+    """
+    result: dict = {"url": url, "claims_saved": 0, "error": None, "model_used": None}
+
+    # 1. Check cache first to save transcription API credits
+    transcript = None
+    freshness_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    if not force_refresh:
+        try:
+            cache_res = (
+                supabase_client
+                .table("scrape_cache")
+                .select("raw_content, scraped_at")
+                .eq("source_url", url)
+                .execute()
+            )
+            if cache_res.data:
+                scraped_at_str = cache_res.data[0].get("scraped_at")
+                if scraped_at_str:
+                    scraped_at = datetime.fromisoformat(scraped_at_str.replace("Z", "+00:00"))
+                    if scraped_at > freshness_threshold:
+                        transcript = cache_res.data[0].get("raw_content")
+                        print(f"[Video Pipeline] Cache HIT: {url}")
+        except Exception as e:
+            print(f"[Video Pipeline] Cache check warning: {e}")
+
+    # 2. Scrape/Download & Transcribe if cache miss
+    if not transcript:
+        from app.services.audio_client import extract_youtube_audio, transcribe_audio_file
+        local_file = None
+        try:
+            print(f"[Video Pipeline] Extracting audio for YouTube video: {url}")
+            local_file = extract_youtube_audio(url)
+            
+            print(f"[Video Pipeline] Transcribing audio with AssemblyAI: {local_file}")
+            transcript = transcribe_audio_file(local_file)
+
+            # Persist to cache
+            supabase_client.table("scrape_cache").upsert({
+                "source_url": url,
+                "raw_content": transcript,
+                "scraped_at": datetime.now(timezone.utc).isoformat(),
+            }).execute()
+
+        except Exception as exc:
+            result["error"] = str(exc)
+            return result
+        finally:
+            # Always clean up temporary audio file to save disk space
+            if local_file and os.path.exists(local_file):
+                try:
+                    os.remove(local_file)
+                    print(f"[Video Pipeline] Cleaned up temporary audio: {local_file}")
+                except Exception as cleanup_err:
+                    print(f"[Video Pipeline] Cleanup failed: {cleanup_err}")
+
+    if not transcript:
+        result["error"] = "Failed to produce transcription text."
+        return result
+
+    # 3. LLM resolution
+    try:
+        resolved = resolve_claims(transcript, url)
+    except Exception as exc:
+        result["error"] = f"LLM resolution failed: {exc}"
+        return result
+
+    claims = resolved["claims"]
+    result["model_used"] = resolved["model_used"]
+    if resolved.get("fallback_reason"):
+        result["fallback_reason"] = resolved["fallback_reason"]
+
+    if not claims:
+        result["error"] = "LLM found no hiking condition claims in the video transcription."
+        return result
+
+    # 4. Match + score + persist each claim
+    rows_to_insert = []
+    for claim in claims:
+        claim_text: str = claim.get("claim_text", "").strip()
+        claim_type: str = claim.get("claim_type", "other")
+        wp_guess: Optional[str] = claim.get("waypoint_name_guess")
+        date_guess: Optional[str] = claim.get("published_date_guess")
+
+        if not claim_text:
+            continue
+
+        waypoint_id = match_waypoint(wp_guess, trail_id) if wp_guess else None
+
+        published_at: Optional[datetime] = None
+        if date_guess:
+            try:
+                published_at = datetime.fromisoformat(date_guess.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        if published_at is None:
+            published_at = datetime.now(timezone.utc)
+
+        score = compute_confidence(
+            source_type=source_type,
+            published_or_scraped_at=published_at,
+            claim_type=claim_type,
+            waypoint_id=waypoint_id,
+            trail_id=trail_id,
+            current_source_url=url,
+        )
+
+        rows_to_insert.append({
+            "trail_id": trail_id,
+            "waypoint_id": waypoint_id,
+            "claim_text": claim_text[:500],
+            "claim_type": claim_type,
+            "confidence_score": score,
+            "source_url": url,
+            "source_type": source_type,
+            "published_or_scraped_at": published_at.isoformat(),
+            "status": "unverified",
+        })
+
+    if rows_to_insert:
+        try:
+            ins_res = (
+                supabase_client
+                .table("condition_reports")
+                .insert(rows_to_insert)
+                .execute()
+            )
+            result["claims_saved"] = len(ins_res.data)
+        except Exception as exc:
+            result["error"] = f"DB insert failed: {exc}"
+
+    return result
+
+
+@router.post("/{slug}/condition-video-sources")
+async def add_condition_video_sources(slug: str, payload: ConditionVideoSourcesRequest):
+    """
+    Run YouTube audio extraction, AssemblyAI transcription, and resolver pipeline
+    on the provided video URLs.
+    """
+    if not supabase_client:
+        raise HTTPException(status_code=500, detail="Supabase client not configured.")
+
+    trail_res = (
+        supabase_client.table("trails").select("id, name").eq("slug", slug).execute()
+    )
+    if not trail_res.data:
+        raise HTTPException(status_code=404, detail=f"Trail '{slug}' not found.")
+
+    trail = trail_res.data[0]
+    trail_id: str = trail["id"]
+
+    valid_source_types = {
+        "official_govt", "established_media", "verified_community", "individual_post"
+    }
+    if payload.source_type not in valid_source_types:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid source_type. Must be one of: {sorted(valid_source_types)}"
+        )
+
+    results_per_video = []
+    total_claims_saved = 0
+
+    for url in payload.video_urls:
+        result = process_single_video(
+            url=url,
+            source_type=payload.source_type,
+            trail_id=trail_id,
+            force_refresh=payload.force_refresh,
+        )
+        total_claims_saved += result["claims_saved"]
+        results_per_video.append(result)
+
+    return {
+        "status": "ok",
+        "trail": trail["name"],
+        "processed_videos": len(payload.video_urls),
+        "total_claims_saved": total_claims_saved,
+        "per_video": results_per_video,
+    }
+
