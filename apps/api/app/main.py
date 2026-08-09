@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import trails
+from app.routers import trails, conditions
 
 app = FastAPI(
     title="Rintis API",
@@ -19,6 +19,7 @@ app.add_middleware(
 
 # Mount Routers
 app.include_router(trails.router, prefix="/api", tags=["Trails"])
+app.include_router(conditions.router, prefix="/api", tags=["Conditions"])
 
 @app.get("/")
 async def root():
