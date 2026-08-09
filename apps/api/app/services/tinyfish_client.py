@@ -106,7 +106,7 @@ def discover_sources(trail_name: str, region: Optional[str] = None) -> list[str]
                     include_domains=domains,
                 )
                 batch = getattr(response, "results", [])
-                print(f"[TinyFish] Query {i+1}: '{query_str[:60]}' → {len(batch)} results")
+                print(f"[TinyFish] Query {i+1}: '{query_str[:60]}' -> {len(batch)} results")
 
                 for result in batch:
                     url = getattr(result, "url", None)
