@@ -1,231 +1,33 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface ScrapeJob {
-  id: string;
-  status: "pending" | "running" | "done" | "failed";
-  discovered_count: number;
-  processed_count: number;
-  failed_count: number;
-  error_message?: string | null;
-}
-
-// ── Discovery Card Component ──────────────────────────────────────────────────
-function DiscoveryCard({
-  slug,
-  apiUrl,
-  onJobDone,
-}: {
-  slug: string;
-  apiUrl: string;
-  onJobDone: () => void;
-}) {
-  const [job, setJob] = useState<ScrapeJob | null>(null);
-  const [triggering, setTriggering] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Stop polling when unmounted
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
-  const stopPolling = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
-
-  const startPolling = (jobId: string) => {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`${apiUrl}/trails/${slug}/scrape-jobs/${jobId}`);
-        if (!res.ok) return;
-        const data: ScrapeJob = await res.json();
-        setJob(data);
-        if (data.status === "done" || data.status === "failed") {
-          stopPolling();
-          if (data.status === "done") {
-            onJobDone();
-          }
-        }
-      } catch {
-        // silently retry next tick
-      }
-    }, 2500);
-  };
-
-  const handleDiscover = async () => {
-    setTriggering(true);
-    setError(null);
-    setJob(null);
-    try {
-      const res = await fetch(`${apiUrl}/trails/${slug}/discover-and-scrape`, {
-        method: "POST",
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const initialJob: ScrapeJob = {
-        id: data.job_id,
-        status: "pending",
-        discovered_count: 0,
-        processed_count: 0,
-        failed_count: 0,
-      };
-      setJob(initialJob);
-      startPolling(data.job_id);
-    } catch (err: any) {
-      setError(err.message || "Gagal memulai discovery.");
-    } finally {
-      setTriggering(false);
-    }
-  };
-
-  // ── Status display helpers ────────────────────────────────────────────────
-  const isActive = job && (job.status === "pending" || job.status === "running");
-  const isDone = job?.status === "done";
-  const isFailed = job?.status === "failed";
-
-  const statusLabel = () => {
-    if (!job) return null;
-    if (job.status === "pending") return "Menghubungi TinyFish...";
-    if (job.status === "running") {
-      if (job.discovered_count === 0) return "Mencari sumber data...";
-      return `Memproses data (${job.processed_count}/${job.discovered_count} selesai${
-        job.failed_count > 0 ? `, ${job.failed_count} gagal` : ""
-      })`;
-    }
-    if (job.status === "done")
-      return `Selesai! ${job.processed_count} URL diproses${
-        job.failed_count > 0 ? `, ${job.failed_count} gagal` : ""
-      }.`;
-    if (job.status === "failed") return `Gagal: ${job.error_message || "Unknown error"}`;
-    return null;
-  };
-
-  return (
-    <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/60 space-y-3">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <span className="text-lg">🔍</span>
-        <div>
-          <div className="text-[9px] font-black uppercase tracking-widest text-emerald-400">
-            Auto-Discovery
-          </div>
-          <div className="text-xs font-bold text-slate-200">
-            Cari Laporan Kondisi
-          </div>
-        </div>
-      </div>
-
-      {/* Description */}
-      <p className="text-[10px] text-slate-400 leading-relaxed">
-        Temukan laporan kondisi jalur terbaru secara otomatis dari sumber resmi,
-        media, dan trip report pendaki.
-      </p>
-
-      {/* Status banner */}
-      {job && (
-        <div
-          className={`flex items-start gap-2 p-2.5 rounded-lg text-[10px] border ${
-            isDone
-              ? "bg-emerald-950/60 border-emerald-800 text-emerald-300"
-              : isFailed
-              ? "bg-red-950/60 border-red-800 text-red-300"
-              : "bg-slate-800/60 border-slate-700 text-slate-300"
-          }`}
-        >
-          {isActive && (
-            <svg
-              className="animate-spin h-3 w-3 mt-0.5 text-emerald-400 shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-              />
-            </svg>
-          )}
-          {isDone && <span className="text-emerald-400 shrink-0">✓</span>}
-          {isFailed && <span className="text-red-400 shrink-0">✗</span>}
-          <span className="leading-snug">{statusLabel()}</span>
-        </div>
-      )}
-
-      {/* Progress bar when running */}
-      {isActive && job.discovered_count > 0 && (
-        <div className="w-full bg-slate-800 rounded-full h-1">
-          <div
-            className="bg-emerald-500 h-1 rounded-full transition-all duration-500"
-            style={{
-              width: `${Math.round(
-                ((job.processed_count + job.failed_count) / job.discovered_count) * 100
-              )}%`,
-            }}
-          />
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="text-[10px] text-red-300 bg-red-950/50 border border-red-800 p-2 rounded-lg">
-          {error}
-        </div>
-      )}
-
-      {/* Button */}
-      <button
-        id="discover-and-scrape-btn"
-        onClick={handleDiscover}
-        disabled={triggering || !!isActive}
-        className={`w-full py-2 px-4 rounded-lg text-xs font-bold tracking-wide transition-all duration-200 ${
-          triggering || isActive
-            ? "bg-slate-700 text-slate-400 cursor-not-allowed"
-            : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md hover:shadow-emerald-900/40 active:scale-95"
-        }`}
-      >
-        {triggering
-          ? "Memulai..."
-          : isActive
-          ? "Sedang Berjalan..."
-          : isDone
-          ? "Cari Lagi"
-          : "Mulai Discovery"}
-      </button>
-    </div>
-  );
-}
+import Navbar from "@/components/Navbar";
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Home() {
+  const router = useRouter();
   const [activeSlug, setActiveSlug] = useState("gunung-merbabu-selo");
   const [waypoints, setWaypoints] = useState<any[]>([]);
   const [trailMeta, setTrailMeta] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  // Incrementing this triggers MapView to re-fetch trail data
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
 
+  const [isMobile, setIsMobile] = useState(false);
+  const [drawerExpanded, setDrawerExpanded] = useState(false);
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+  // Check mobile viewport dynamically
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const fetchTrailInfo = async () => {
     if (!activeSlug) return;
@@ -248,125 +50,319 @@ export default function Home() {
     }
   };
 
-  // Fetch list of waypoints for the sidebar display
   useEffect(() => {
     fetchTrailInfo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSlug, apiUrl]);
 
-  const handleJobDone = () => {
-    // Increment key to force MapView to re-fetch enriched trail data
-    setMapRefreshKey((k) => k + 1);
-    // Also refresh sidebar waypoint list
-    fetchTrailInfo();
-  };
-
-  return (
-    <main className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Sidebar Panel */}
-      <aside className="w-80 h-full flex flex-col glass-panel border-r border-slate-900 z-10 shrink-0 select-none">
-        {/* Brand */}
-        <div className="p-6 border-b border-slate-900 bg-slate-950/40">
-          <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-lg bg-emerald-500 flex items-center justify-center font-black text-slate-950 text-sm">R</span>
-            <h1 className="text-xl font-black tracking-wider text-white">RINTIS</h1>
+  // Render Sidebar content
+  const renderSidebarContent = () => (
+    <>
+      {/* Trail Info */}
+      <div style={{ padding: "0 0 2rem", borderBottom: "1px solid rgba(240, 237, 230, 0.08)" }}>
+        <span style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#E55B3C" }}>
+          Jalur Pendakian
+        </span>
+        {trailMeta ? (
+          <div style={{ marginTop: "8px" }}>
+            <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#f0ede6", letterSpacing: "-0.02em", lineHeight: 1.15 }}>
+              {trailMeta.name}
+            </h2>
+            <p style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.5)", marginTop: "4px" }}>
+              {trailMeta.region}
+            </p>
           </div>
-          <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 mt-1">
-            Decision-Support Hiking Layer
-          </p>
+        ) : (
+          <div style={{ marginTop: "8px" }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 500, color: "rgba(240, 237, 230, 0.4)", fontStyle: "italic" }}>
+              Belum di-import
+            </h2>
+          </div>
+        )}
+      </div>
+
+      {/* Auto-Discovery Section (Navigates to full page /app/discovery) */}
+      <div
+        style={{
+          padding: "2rem 0 2rem",
+          borderBottom: "1px solid rgba(240, 237, 230, 0.08)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "1rem",
+        }}
+      >
+        <div>
+          <div style={{ fontFamily: "var(--font-sans)", fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#E55B3C", marginBottom: "0.4rem" }}>
+            Auto-Discovery
+          </div>
+          <div style={{ fontFamily: "var(--font-sans)", fontSize: "16px", fontWeight: 700, color: "#f0ede6", letterSpacing: "-0.01em" }}>
+            Cari Laporan Kondisi
+          </div>
+        </div>
+        <p style={{ fontFamily: "var(--font-sans)", fontSize: "12px", color: "rgba(240, 237, 230, 0.55)", lineHeight: 1.6, margin: 0 }}>
+          Temukan laporan kondisi jalur terbaru secara otomatis dari sumber resmi, media, dan trip report pendaki.
+        </p>
+        <button
+          id="discover-and-scrape-btn"
+          onClick={() => router.push(`/app/discovery?slug=${activeSlug}`)}
+          style={{
+            width: "100%",
+            padding: "10px 16px",
+            borderRadius: "4px",
+            fontSize: "12px",
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            border: "none",
+            cursor: "pointer",
+            backgroundColor: "#E55B3C",
+            color: "#ffffff",
+            boxShadow: "0 4px 12px rgba(229, 91, 60, 0.2)",
+            transition: "all 0.2s ease",
+          }}
+        >
+          Mulai Discovery
+        </button>
+      </div>
+
+      {/* Waypoints List */}
+      <div style={{ padding: "2.5rem 0 1.5rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <span style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "rgba(240, 237, 230, 0.4)" }}>
+            Daftar Waypoint ({waypoints.length})
+          </span>
         </div>
 
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Trail Info */}
-          <div>
-            <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400">Jalur Pendakian</span>
-            {trailMeta ? (
-              <div className="mt-1">
-                <h2 className="text-lg font-bold text-white leading-tight">{trailMeta.name}</h2>
-                <p className="text-xs text-slate-400 mt-0.5">{trailMeta.region}</p>
-              </div>
-            ) : (
-              <div className="mt-1">
-                <h2 className="text-lg font-bold text-slate-400 italic">Belum di-import</h2>
-                <p className="text-xs text-slate-500 mt-1">
-                  Gunakan POST `/api/trails/import-osm` untuk memuat data gunung.
-                </p>
-              </div>
-            )}
+        {loading ? (
+          <div style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.4)", padding: "16px 0" }} className="animate-pulse">
+            Memuat daftar pos...
           </div>
+        ) : waypoints.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {waypoints.map((wp, idx) => {
+              let accentColor = "rgba(99, 102, 241, 0.4)"; // Indigo default
+              if (wp.waypoint_type === "peak") accentColor = "#ef4444";
+              else if (wp.waypoint_type === "camp") accentColor = "#f97316";
+              else if (wp.waypoint_type === "water_source") accentColor = "#06b6d4";
+              else if (wp.waypoint_type === "trailhead") accentColor = "#E55B3C";
 
-          {/* Auto-Discovery Card */}
-          <DiscoveryCard
-            slug={activeSlug}
-            apiUrl={apiUrl}
-            onJobDone={handleJobDone}
-          />
+              const isPeak = wp.waypoint_type === "peak";
 
-          {/* Quick Guide */}
-          <div className="p-3.5 bg-slate-900/60 rounded-xl border border-slate-800/80 text-xs text-slate-300 space-y-2">
-            <div className="font-extrabold text-[9px] uppercase tracking-wider text-slate-400">Navigasi Peta 3D</div>
-            <div className="flex items-start gap-2">
-              <span className="text-emerald-400">🖱️</span>
-              <p><b>Klik Kanan + Tarik</b>: Memutar &amp; mengatur sudut pandang 3D (tilt/pitch).</p>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-emerald-400">👆</span>
-              <p><b>Klik Kiri</b>: Memilih marker waypoint untuk detail.</p>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="text-emerald-400">🔄</span>
-              <p><b>Scroll</b>: Zoom in/out untuk memperbesar peta.</p>
-            </div>
-          </div>
-
-          {/* Waypoints List */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Daftar Waypoint ({waypoints.length})</span>
-            </div>
-            {loading ? (
-              <div className="text-xs text-slate-400 animate-pulse py-4">Memuat daftar pos...</div>
-            ) : waypoints.length > 0 ? (
-              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                {waypoints.map((wp, idx) => {
-                  let badgeColor = "bg-indigo-950 text-indigo-400 border border-indigo-900";
-                  if (wp.waypoint_type === "peak") badgeColor = "bg-red-950 text-red-400 border border-red-900";
-                  if (wp.waypoint_type === "camp") badgeColor = "bg-orange-950 text-orange-400 border border-orange-900";
-                  if (wp.waypoint_type === "water_source") badgeColor = "bg-cyan-950 text-cyan-400 border border-cyan-900";
-                  if (wp.waypoint_type === "trailhead") badgeColor = "bg-emerald-950 text-emerald-400 border border-emerald-900";
-
-                  return (
-                    <div key={idx} className="p-2.5 rounded-lg bg-slate-900/40 border border-slate-900 hover:border-slate-800 transition flex items-center justify-between gap-2">
-                      <div className="truncate">
-                        <div className="text-xs font-bold text-slate-200 truncate">{wp.name}</div>
-                        {wp.elevation_m && (
-                          <div className="text-[10px] text-emerald-400/80 font-semibold">{wp.elevation_m} mdpl</div>
-                        )}
-                      </div>
-                      <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${badgeColor} shrink-0`}>
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "14px 0",
+                    borderBottom: "1px solid rgba(240, 237, 230, 0.05)",
+                    gap: "1rem",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+                    {/* Left Accent Strip */}
+                    <div
+                      style={{
+                        width: "2px",
+                        height: "16px",
+                        backgroundColor: accentColor,
+                        borderRadius: "1px",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {/* Meta details */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0, overflow: "hidden" }}>
+                      <span
+                        style={{
+                          fontSize: "13.5px",
+                          fontWeight: isPeak ? 400 : 500,
+                          color: "#f0ede6",
+                          fontFamily: isPeak ? "var(--font-serif)" : "var(--font-sans)",
+                          fontStyle: isPeak ? "italic" : "normal",
+                          letterSpacing: isPeak ? "0.01em" : "0",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {wp.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "8.5px",
+                          fontWeight: 600,
+                          color: accentColor,
+                          letterSpacing: "0.12em",
+                          textTransform: "uppercase",
+                        }}
+                      >
                         {wp.waypoint_type}
                       </span>
                     </div>
-                  );
-                })}
+                  </div>
+
+                  {/* Tabular elevation */}
+                  {wp.elevation_m ? (
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: 500,
+                        color: "rgba(240, 237, 230, 0.7)",
+                        fontFamily: "var(--font-sans)",
+                        fontVariantNumeric: "tabular-nums",
+                        textAlign: "right",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {wp.elevation_m} mdpl
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.4)", padding: "16px 0", fontStyle: "italic" }}>
+            Tidak ada waypoint.
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100vw",
+        height: "100vh",
+        overflow: "hidden",
+        background: "radial-gradient(ellipse at 72% 0%, #2b2319 0%, #161210 52%, #0c0a09 100%)",
+        fontFamily: "var(--font-sans)",
+      }}
+    >
+      <Navbar />
+
+      <main
+        style={{
+          display: "flex",
+          width: "100%",
+          height: "calc(100vh - 70px)",
+          position: "absolute",
+          top: "70px",
+          left: 0,
+        }}
+      >
+        {/* DESKTOP SIDEBAR PANEL */}
+        {!isMobile && (
+          <aside
+            className="w-80 h-full flex flex-col border-r border-slate-900 z-10 shrink-0 select-none"
+            style={{
+              backgroundColor: "rgba(12, 11, 9, 0.45)",
+              backdropFilter: "blur(10px)",
+            }}
+          >
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {renderSidebarContent()}
+            </div>
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-900 text-center text-[10px] text-slate-500 bg-slate-950/20">
+              Rintis App &copy; {new Date().getFullYear()} • Stage 4
+            </div>
+          </aside>
+        )}
+
+        {/* MAP CONTAINER */}
+        <section
+          style={{
+            flex: 1,
+            height: "100%",
+            position: "relative",
+            backgroundColor: "#0c0a09",
+          }}
+        >
+          <MapView slug={activeSlug} apiUrl={apiUrl} refreshKey={mapRefreshKey} />
+        </section>
+
+        {/* RESPONSIVE MOBILE BOTTOM SHEET DRAWER */}
+        {isMobile && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              width: "100%",
+              height: drawerExpanded ? "60vh" : "80px",
+              zIndex: 35,
+              backgroundColor: "rgba(12, 11, 9, 0.88)",
+              backdropFilter: "blur(20px)",
+              borderTop: "1px solid rgba(240, 237, 230, 0.08)",
+              transition: "height 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {/* Grab Handle Header */}
+            <div
+              onClick={() => setDrawerExpanded(!drawerExpanded)}
+              style={{
+                height: "80px",
+                padding: "0 24px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "9px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "#E55B3C" }}>
+                  Jalur Pendakian
+                </div>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>
+                  {trailMeta ? trailMeta.name : "Memuat..."}
+                </div>
               </div>
-            ) : (
-              <div className="text-xs text-slate-500 italic py-4">Tidak ada waypoint. Silakan import data terlebih dahulu.</div>
+              <button
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#E55B3C",
+                  backgroundColor: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {drawerExpanded ? "Tutup Detail" : "Lihat Detail"}
+              </button>
+            </div>
+
+            {/* Slider drag line marker */}
+            <div
+              onClick={() => setDrawerExpanded(!drawerExpanded)}
+              style={{
+                position: "absolute",
+                top: "8px",
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: "36px",
+                height: "3px",
+                borderRadius: "1.5px",
+                backgroundColor: "rgba(240, 237, 230, 0.15)",
+                cursor: "pointer",
+              }}
+            />
+
+            {/* Expanded Drawer Scroll Area */}
+            {drawerExpanded && (
+              <div style={{ flex: 1, overflowY: "auto", padding: "0 24px 24px" }}>
+                {renderSidebarContent()}
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-900 text-center text-[10px] text-slate-500 bg-slate-950/20">
-          Rintis App &copy; {new Date().getFullYear()} • Stage 4
-        </div>
-      </aside>
-
-      {/* Map Content */}
-      <section className="flex-1 h-full relative bg-slate-950">
-        <MapView slug={activeSlug} apiUrl={apiUrl} refreshKey={mapRefreshKey} />
-      </section>
-    </main>
+        )}
+      </main>
+    </div>
   );
 }
