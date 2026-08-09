@@ -40,6 +40,7 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
     });
 
     mapRef.current = map;
+    (window as any).map = map;
 
     // Add navigation and terrain control
     map.addControl(new maplibregl.NavigationControl({
@@ -48,35 +49,27 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
     }), "top-right");
 
     map.on("load", () => {
-      // Add Terrain RGB-DEM source (encoding is 'terrarium' for MapTiler)
-      map.addSource("terrain-rgb", {
-        type: "raster-dem",
-        tiles: [
-          `https://api.maptiler.com/tiles/terrain-rgb/{z}/{x}/{y}.png?key=${maptilerKey}`
-        ],
-        tileSize: 256,
-        encoding: "terrarium",
-      });
+      console.log("MAP_LOAD: Loading MapLibre map load handler");
+      // Add Terrain RGB-DEM source with a unique source name to avoid style source collision
+      try {
+        map.addSource("maptiler-dem-terrain", {
+          type: "raster-dem",
+          url: `https://api.maptiler.com/tiles/terrain-rgb-v2/tiles.json?key=${maptilerKey}`,
+        });
+        console.log("MAP_LOAD: Source maptiler-dem-terrain added successfully");
+      } catch (e) {
+        console.error("MAP_LOAD: Error adding source maptiler-dem-terrain", e);
+      }
 
       // Activate terrain
-      map.setTerrain({
-        source: "terrain-rgb",
-        exaggeration: 2.2, // Increased exaggeration for dramatic 3D relief
-      });
-
-      // Add simple atmosphere sky layer if available in MapLibre
       try {
-        map.addLayer({
-          id: "sky-layer",
-          type: "sky",
-          paint: {
-            "sky-type": "atmosphere",
-            "sky-atmosphere-color": "#0a0f1a",
-            "sky-atmosphere-halo-color": "#1e293b",
-          },
+        map.setTerrain({
+          source: "maptiler-dem-terrain",
+          exaggeration: 2.2, // Increased exaggeration for dramatic 3D relief
         });
+        console.log("MAP_LOAD: setTerrain called successfully, current terrain:", map.getTerrain());
       } catch (e) {
-        console.log("Sky layer not supported on this style", e);
+        console.error("MAP_LOAD: Error calling setTerrain", e);
       }
     });
 
