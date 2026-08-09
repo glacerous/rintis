@@ -48,7 +48,7 @@ def scrape_url(source_url: str, force_refresh: bool = False) -> Optional[str]:
         # Use raw scrape (not extract) to keep credit usage low.
         result = app.scrape_url(
             source_url,
-            params={"formats": ["markdown"]},
+            formats=["markdown"],
         )
 
         # firecrawl-py v1 returns a dict-like object; get markdown content.
