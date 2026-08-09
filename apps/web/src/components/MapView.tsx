@@ -172,7 +172,7 @@ export default function MapView({ slug, apiUrl }: MapViewProps) {
           if (feature.properties?.type !== "waypoint") return;
 
           const [lng, lat] = feature.geometry.coordinates;
-          const { name, waypoint_type, elevation_m } = feature.properties;
+          const { name, waypoint_type, elevation_m, condition_reports } = feature.properties;
 
           // Create custom marker container
           const markerEl = document.createElement("div");
@@ -201,12 +201,55 @@ export default function MapView({ slug, apiUrl }: MapViewProps) {
           markerEl.style.color = "#ffffff";
           markerEl.innerHTML = `<span>${symbol}</span>`;
 
+          // Setup Condition Reports HTML
+          const reports = condition_reports || [];
+          let reportsHtml = "";
+          if (reports.length > 0) {
+            reportsHtml = `
+              <div class="mt-2 pt-2 border-t border-slate-700/60 max-h-36 overflow-y-auto space-y-1.5 pr-1 select-text">
+                <div class="text-[8px] font-black uppercase tracking-wider text-slate-400 mb-1">Laporan Kondisi</div>
+                ${reports.map((r: any) => {
+                  let badgeClass = "bg-slate-800 text-slate-400 border border-slate-700";
+                  if (r.confidence_score >= 0.7) {
+                    badgeClass = "bg-emerald-950 text-emerald-400 border border-emerald-900";
+                  } else if (r.confidence_score >= 0.4) {
+                    badgeClass = "bg-amber-950 text-amber-400 border border-amber-900";
+                  }
+
+                  let sourceLabel = r.source_type || "Source";
+                  if (sourceLabel === "official_govt") sourceLabel = "Pemerintah";
+                  else if (sourceLabel === "established_media") sourceLabel = "Media";
+                  else if (sourceLabel === "verified_community") sourceLabel = "Komunitas";
+                  else if (sourceLabel === "individual_post") sourceLabel = "Individu";
+
+                  const dateStr = r.published_or_scraped_at 
+                    ? new Date(r.published_or_scraped_at).toLocaleDateString("id-ID", { day: 'numeric', month: 'short' }) 
+                    : "-";
+
+                  return `
+                    <div class="text-[10px] leading-snug p-1.5 rounded bg-slate-900/60 border border-slate-800">
+                      <div class="flex items-center justify-between gap-1 mb-1">
+                        <span class="text-[7px] font-bold uppercase px-1 rounded ${badgeClass}">
+                          C: ${Math.round(r.confidence_score * 100)}%
+                        </span>
+                        <span class="text-[7px] text-slate-500 font-bold uppercase">${sourceLabel} • ${dateStr}</span>
+                      </div>
+                      <div class="text-slate-200 font-normal">${r.claim_text}</div>
+                      <a href="${r.source_url}" target="_blank" rel="noopener noreferrer" class="text-[8px] text-emerald-400 hover:underline block mt-0.5 pointer-events-auto">Buka Sumber ↗</a>
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            `;
+          }
+
           // Setup Popup
           const popupHtml = `
-            <div class="flex flex-col select-none">
-              <span class="text-[10px] tracking-widest font-black uppercase text-slate-400 mb-0.5">${waypoint_type}</span>
+            <div class="flex flex-col select-none w-56">
+              <span class="text-[9px] tracking-widest font-black uppercase text-slate-400 mb-0.5">${waypoint_type}</span>
               <span class="text-sm font-extrabold text-slate-100 leading-tight mb-1">${name}</span>
               ${elevation_m ? `<span class="text-xs text-emerald-400 font-semibold">Elevasi: ${elevation_m} mdpl</span>` : ""}
+              ${reportsHtml}
             </div>
           `;
 
