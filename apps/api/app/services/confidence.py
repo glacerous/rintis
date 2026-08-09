@@ -156,12 +156,11 @@ def _track_record(source_type: str) -> float:
     """
     Track record of the source domain based on historical accuracy.
 
-    SIMPLIFICATION (MVP Stage 2): we default to 1.0 for official government
-    announcements and 0.5 for all other sources since we do not yet have
-    historical dispute data.
+    SIMPLIFICATION (MVP Stage 2): we default to 0.5 for all sources because
+    we do not yet have enough confirmed/disputed report data to build a real
+    truth-discovery model.
     """
-    if source_type == "official_govt":
-        return 1.0
+    _ = source_type
     return 0.5
 
 
