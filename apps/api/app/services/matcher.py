@@ -79,7 +79,7 @@ def match_waypoint(
     best_name, score, _ = result
     waypoint_id = choices[best_name]
     print(
-        f"[Matcher] Matched '{waypoint_name_guess}' → '{best_name}' "
-        f"(score {score:.1f}) → waypoint {waypoint_id}"
+        f"[Matcher] Matched '{waypoint_name_guess}' -> '{best_name}' "
+        f"(score {score:.1f}) -> waypoint {waypoint_id}"
     )
     return waypoint_id
