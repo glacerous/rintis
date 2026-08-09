@@ -3,11 +3,11 @@ import urllib.parse
 from typing import Dict, List, Any, Optional
 
 OVERPASS_ENDPOINTS = [
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.nchc.org.tw/api/interpreter",
-    "https://z.overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
-    "https://overpass-api.de/api/interpreter"
+    "https://z.overpass-api.de/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter"
 ]
 
 HEADERS = {
