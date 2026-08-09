@@ -117,7 +117,7 @@ relation({osm_relation_id})->.route;
   node(around.all:500)["hiking"="waypoint"];
   node(around.all:500)["name"~"Pos|Camp|Puncak|Sumber|Pintu",i];
 );
-out body;"""
+out meta;"""
 
     data = execute_overpass_query(query)
     if not data or "elements" not in data:
@@ -190,7 +190,9 @@ out body;"""
             "lat": el["lat"],
             "lng": el["lon"],
             "elevation_m": elevation,
-            "osm_node_id": el["id"]
+            "osm_node_id": el["id"],
+            "osm_version": el.get("version"),
+            "osm_last_edited": el.get("timestamp")
         })
         
     return waypoints
