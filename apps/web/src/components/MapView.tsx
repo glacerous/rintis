@@ -6,9 +6,10 @@ import maplibregl from "maplibre-gl";
 interface MapViewProps {
   slug: string;
   apiUrl: string;
+  refreshKey?: number;
 }
 
-export default function MapView({ slug, apiUrl }: MapViewProps) {
+export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
@@ -294,7 +295,7 @@ export default function MapView({ slug, apiUrl }: MapViewProps) {
     };
 
     fetchTrail();
-  }, [slug, apiUrl]);
+  }, [slug, apiUrl, refreshKey]);
 
   if (!maptilerKey) {
     return (
