@@ -79,6 +79,17 @@ def infer_source_type(url: str) -> str:
     return "individual_post"
 
 
+def _update_url_stage(job_id: str, url: str, stage: str):
+    """Helper to update a scrape_job_urls row stage."""
+    try:
+        supabase_client.table("scrape_job_urls").update({
+            "stage": stage,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("job_id", job_id).eq("url", url).execute()
+    except Exception as e:
+        print(f"[Job {job_id}] Failed to update url stage for {url} to {stage}: {e}")
+
+
 # ── Core pipeline: single URL ─────────────────────────────────────────────────
 
 def process_single_url(
@@ -86,6 +97,7 @@ def process_single_url(
     source_type: str,
     trail_id: str,
     force_refresh: bool = False,
+    job_id: Optional[str] = None,
 ) -> dict:
     """
     Run the full pipeline for one URL:
@@ -96,22 +108,51 @@ def process_single_url(
     """
     result: dict = {"url": url, "claims_saved": 0, "error": None, "model_used": None}
 
+    # resolver cache idempotency check
+    if not force_refresh:
+        try:
+            cache_check = (
+                supabase_client
+                .table("scrape_cache")
+                .select("resolved_at")
+                .eq("source_url", url)
+                .execute()
+            )
+            if cache_check.data and cache_check.data[0].get("resolved_at"):
+                print(f"[process_single_url] SKIP (already resolved): {url}")
+                if job_id:
+                    _update_url_stage(job_id, url, "done")
+                result["model_used"] = "cached-resolver"
+                return result
+        except Exception as e:
+            print(f"Failed to check resolved_at cache for {url}: {e}")
+
     # 1. Scrape (cache-first)
+    if job_id:
+        _update_url_stage(job_id, url, "scraping")
     try:
         raw_text = scrape_url(url, force_refresh=force_refresh)
     except Exception as exc:
         result["error"] = f"Scrape failed: {exc}"
+        if job_id:
+            _update_url_stage(job_id, url, "failed")
         return result
 
     if not raw_text:
         result["error"] = "Scrape returned empty content."
+        if job_id:
+            _update_url_stage(job_id, url, "failed")
         return result
 
     # 2. LLM extraction
+    if job_id:
+        _update_url_stage(job_id, url, "resolving")
     try:
         resolved = resolve_claims(raw_text, url)
     except Exception as exc:
         result["error"] = f"LLM resolution failed: {exc}"
+        if job_id:
+            _update_url_stage(job_id, url, "failed")
         return result
 
     claims = resolved["claims"]
@@ -119,11 +160,24 @@ def process_single_url(
     if resolved.get("fallback_reason"):
         result["fallback_reason"] = resolved["fallback_reason"]
 
+    # Mark resolved in scrape_cache to guarantee idempotency on subsequent runs
+    try:
+        supabase_client.table("scrape_cache").update({
+            "resolved_at": datetime.now(timezone.utc).isoformat()
+        }).eq("source_url", url).execute()
+    except Exception as e:
+        print(f"Failed to update resolved_at cache for {url}: {e}")
+
     if not claims:
         result["error"] = "LLM found no hiking condition claims in this content."
+        if job_id:
+            _update_url_stage(job_id, url, "done")
         return result
 
     # 3. Match + score + persist each claim
+    if job_id:
+        _update_url_stage(job_id, url, "scoring")
+
     rows_to_insert = []
     for claim in claims:
         claim_text: str = claim.get("claim_text", "").strip()
@@ -175,8 +229,15 @@ def process_single_url(
                 .execute()
             )
             result["claims_saved"] = len(ins_res.data)
+            if job_id:
+                _update_url_stage(job_id, url, "done")
         except Exception as exc:
             result["error"] = f"DB insert failed: {exc}"
+            if job_id:
+                _update_url_stage(job_id, url, "failed")
+    else:
+        if job_id:
+            _update_url_stage(job_id, url, "done")
 
     return result
 
@@ -223,6 +284,22 @@ def _run_discovery_job(job_id: str, trail_id: str, trail_name: str, region: str)
     print(f"[Job {job_id}] Discovered {discovered_count} candidate URLs.")
     _update_job(discovered_count=discovered_count)
 
+    # Insert candidate URLs into scrape_job_urls
+    if candidate_urls:
+        rows = [
+            {
+                "job_id": job_id,
+                "url": url,
+                "stage": "discovered",
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            for url in candidate_urls
+        ]
+        try:
+            supabase_client.table("scrape_job_urls").insert(rows).execute()
+        except Exception as e:
+            print(f"[Job {job_id}] Failed to insert initial scrape_job_urls: {e}")
+
     if not candidate_urls:
         _update_job(
             status="done",
@@ -251,6 +328,7 @@ def _run_discovery_job(job_id: str, trail_id: str, trail_name: str, region: str)
                     scraped_at = datetime.fromisoformat(scraped_at_str.replace("Z", "+00:00"))
                     if scraped_at > freshness_threshold:
                         print(f"[Job {job_id}] SKIP (fresh cache): {url}")
+                        _update_url_stage(job_id, url, "done")
                         processed += 1
                         _update_job(processed_count=processed)
                         continue
@@ -265,6 +343,7 @@ def _run_discovery_job(job_id: str, trail_id: str, trail_name: str, region: str)
             source_type=source_type,
             trail_id=trail_id,
             force_refresh=False,
+            job_id=job_id,
         )
 
         if url_result["error"]:
@@ -431,7 +510,23 @@ async def get_scrape_job(slug: str, job_id: str):
     if not job_res.data:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found for this trail.")
 
-    return job_res.data[0]
+    job = job_res.data[0]
+
+    try:
+        urls_res = (
+            supabase_client
+            .table("scrape_job_urls")
+            .select("url, stage, updated_at")
+            .eq("job_id", job_id)
+            .order("updated_at", desc=False)
+            .execute()
+        )
+        job["urls"] = urls_res.data or []
+    except Exception as e:
+        print(f"Failed to fetch scrape_job_urls details: {e}")
+        job["urls"] = []
+
+    return job
 
 
 # ── Core pipeline: single YouTube Video ───────────────────────────────────────
