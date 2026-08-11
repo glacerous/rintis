@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
 import Navbar from "@/components/Navbar";
 import { setupGeofencingListener, registerWaypointGeofences, clearAllGeofences } from "../geofence";
+import { startFallDetectionListener, stopFallDetectionListener } from "../motion";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ── Custom Tooltip for Elevation Profile Chart ────────────────────────────────
@@ -65,6 +66,13 @@ export default function Home() {
   const [sosTriggered, setSosTriggered] = useState(false);
   const [sosCoordinates, setSosCoordinates] = useState<{ lat: number; lng: number } | null>(null);
 
+  // Fall Detection Prototype States
+  const [fallDetected, setFallDetected] = useState(false);
+  const [fallCountdown, setFallCountdown] = useState(15);
+  const [fallStatusText, setFallStatusText] = useState("");
+  const fallTimerRef = useRef<any>(null);
+  const fallCountdownIntervalRef = useRef<any>(null);
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
   // Check mobile viewport dynamically
@@ -95,6 +103,20 @@ export default function Home() {
       try {
         const sessionObj = JSON.parse(cachedSession);
         setActiveSession(sessionObj);
+
+        // Setup Geofencing and Fall Detection listeners on active session load
+        setupGeofencingListener(activeSlug, cachedId, apiUrl);
+        startFallDetectionListener({}, {
+          onImpactDetected: () => {
+            setFallStatusText("Guncangan terdeteksi! Memverifikasi keheningan...");
+          },
+          onStillnessVerified: () => {
+            triggerFallWarningCountdown();
+          },
+          onStillnessFailed: () => {
+            setFallStatusText("");
+          }
+        });
       } catch (e) {
         console.error("Failed to parse cached active session", e);
       }
@@ -229,7 +251,20 @@ export default function Home() {
         }));
         await registerWaypointGeofences(geoWps, 120);
 
-        alert("Pendakian dimulai! Geofencing aktif di perangkat Anda.");
+        // Setup Fall Detection Prototype sensor
+        await startFallDetectionListener({}, {
+          onImpactDetected: () => {
+            setFallStatusText("Guncangan terdeteksi! Memverifikasi keheningan...");
+          },
+          onStillnessVerified: () => {
+            triggerFallWarningCountdown();
+          },
+          onStillnessFailed: () => {
+            setFallStatusText("");
+          }
+        });
+
+        alert("Pendakian dimulai! Geofencing & Fall Detection aktif di perangkat.");
         fetchTrailInfo();
       } else {
         const errorText = await response.text();
@@ -255,8 +290,9 @@ export default function Home() {
         setActiveSession(null);
         localStorage.removeItem("rintis_active_session");
 
-        // Clear native geofences
+        // Clear native geofences and stop fall detection sensors
         await clearAllGeofences();
+        await stopFallDetectionListener();
 
         alert("Pendakian selesai! Terima kasih telah melapor kembali dengan selamat.");
         
@@ -304,7 +340,7 @@ export default function Home() {
   };
 
   // SOS actions
-  const startSosTimer = () => {
+  function startSosTimer() {
     setSosHolding(true);
     setSosProgress(0);
     
@@ -318,17 +354,17 @@ export default function Home() {
         setSosProgress(elapsed);
       }
     }, 50);
-  };
+  }
 
-  const cancelSosTimer = () => {
+  function cancelSosTimer() {
     setSosHolding(false);
     setSosProgress(0);
     if (sosIntervalRef.current) {
       clearInterval(sosIntervalRef.current);
     }
-  };
+  }
 
-  const triggerEmergencySOS = () => {
+  function triggerEmergencySOS() {
     if (!navigator.geolocation) {
       alert("Pencarian GPS tidak didukung di perangkat Anda.");
       return;
@@ -365,7 +401,58 @@ export default function Home() {
       },
       { enableHighAccuracy: true }
     );
-  };
+  }
+
+  // Fall Detection Prototype triggers
+  function triggerFallWarningCountdown() {
+    setFallDetected(true);
+    setFallCountdown(15);
+    
+    if (fallTimerRef.current) clearTimeout(fallTimerRef.current);
+    if (fallCountdownIntervalRef.current) clearInterval(fallCountdownIntervalRef.current);
+
+    fallCountdownIntervalRef.current = setInterval(() => {
+      setFallCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(fallCountdownIntervalRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    fallTimerRef.current = setTimeout(() => {
+      setFallDetected(false);
+      triggerEmergencySOS();
+    }, 15000);
+  }
+
+  function handleCancelFallAlert() {
+    if (fallTimerRef.current) {
+      clearTimeout(fallTimerRef.current);
+      fallTimerRef.current = null;
+    }
+    if (fallCountdownIntervalRef.current) {
+      clearInterval(fallCountdownIntervalRef.current);
+      fallCountdownIntervalRef.current = null;
+    }
+    setFallDetected(false);
+    setFallCountdown(15);
+    setFallStatusText("");
+    
+    // Rearm
+    startFallDetectionListener({}, {
+      onImpactDetected: () => {
+        setFallStatusText("Guncangan terdeteksi! Memverifikasi keheningan...");
+      },
+      onStillnessVerified: () => {
+        triggerFallWarningCountdown();
+      },
+      onStillnessFailed: () => {
+        setFallStatusText("");
+      }
+    });
+  }
 
   // Extract chart data
   const elevationData = waypoints
@@ -549,6 +636,19 @@ export default function Home() {
               <span style={{ fontSize: "12px", fontWeight: 500, color: "#f0ede6" }}>{activeSession.emergency_contact_email}</span>
             </div>
 
+            {/* Fall Detection Prototype Status */}
+            <div style={{ marginTop: "4px", paddingTop: "8px", borderTop: "1px dashed rgba(240, 237, 230, 0.08)", display: "flex", flexDirection: "column", gap: "2px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                <span style={{ fontSize: "10px", fontWeight: 700, color: "rgba(240, 237, 230, 0.4)", textTransform: "uppercase" }}>Detektor Jatuh (Prototipe):</span>
+                <span style={{ fontSize: "10px", fontWeight: 600, color: "#E55B3C" }}>AKTIF</span>
+              </div>
+              {fallStatusText && (
+                <div style={{ fontSize: "10px", color: "#F38165", fontStyle: "italic", marginTop: "2px" }}>
+                  {fallStatusText}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={handleCompleteHike}
               style={{
@@ -570,6 +670,34 @@ export default function Home() {
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.08)"}
             >
               Selesaikan Pendakian
+            </button>
+
+            {/* Simulate Fall Button (Web/demo tool) */}
+            <button
+              onClick={() => {
+                setFallStatusText("Guncangan terdeteksi! Memverifikasi keheningan...");
+                setTimeout(() => {
+                  triggerFallWarningCountdown();
+                }, 1500); // 1.5 seconds delay to simulate stillness verification!
+              }}
+              style={{
+                marginTop: "4px",
+                width: "100%",
+                padding: "6px 10px",
+                backgroundColor: "rgba(229, 91, 60, 0.08)",
+                color: "#ff8264",
+                border: "1px solid rgba(229, 91, 60, 0.2)",
+                borderRadius: "3px",
+                fontSize: "10px",
+                fontWeight: 600,
+                cursor: "pointer",
+                textTransform: "uppercase",
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.15)"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.08)"}
+            >
+              💥 Simulasikan Jatuh
             </button>
           </div>
         ) : (
@@ -646,6 +774,16 @@ export default function Home() {
                   outline: "none"
                 }}
               />
+            </div>
+
+            {/* Prototype Fall Detection Notice */}
+            <div style={{ backgroundColor: "rgba(229, 91, 60, 0.04)", border: "1px solid rgba(229, 91, 60, 0.15)", borderRadius: "3px", padding: "8px", marginTop: "4px" }}>
+              <div style={{ fontSize: "9px", fontWeight: 700, color: "#E55B3C", textTransform: "uppercase", display: "flex", alignItems: "center", gap: "4px" }}>
+                <span>⚠️ Prototipe Deteksi Jatuh</span>
+              </div>
+              <p style={{ fontSize: "8.5px", color: "rgba(240, 237, 230, 0.5)", margin: "4px 0 0", lineHeight: 1.3 }}>
+                Fitur berbasis threshold kasar untuk demo. BUKAN alat keselamatan tervalidasi klinis/lapangan.
+              </p>
             </div>
 
             <button
@@ -1432,6 +1570,98 @@ export default function Home() {
                 }}
               >
                 Tutup & Kembali
+              </button>
+            </div>
+          </div>
+        )}
+        {/* Fall Detection Alarm Countdown Modal Overlay */}
+        {fallDetected && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(13, 10, 9, 0.95)",
+              backdropFilter: "blur(12px)",
+              zIndex: 110,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "24px"
+            }}
+          >
+            <div
+              style={{
+                maxWidth: "420px",
+                backgroundColor: "#161210",
+                border: "2px solid #E55B3C",
+                borderRadius: "6px",
+                padding: "28px 24px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "16px",
+                boxShadow: "0 0 50px rgba(229, 91, 60, 0.25)",
+                animation: "pulse 2s infinite"
+              }}
+            >
+              <div style={{ fontSize: "50px" }}>🚨</div>
+              
+              <div>
+                <h2 style={{ fontSize: "20px", fontWeight: 700, color: "#E55B3C", margin: 0, letterSpacing: "-0.01em" }}>
+                  DETEKSI JATUH (PROTOTIPE)
+                </h2>
+                <p style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.75)", marginTop: "8px", lineHeight: 1.5 }}>
+                  Guncangan keras diikuti dengan posisi diam terdeteksi pada perangkat Anda.
+                </p>
+              </div>
+
+              {/* Large countdown text */}
+              <div style={{ margin: "10px 0" }}>
+                <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", color: "rgba(240, 237, 230, 0.4)", letterSpacing: "0.1em" }}>
+                  Mengirim SOS Otomatis Dalam
+                </div>
+                <div style={{ fontSize: "64px", fontWeight: 800, color: "#f0ede6", fontFamily: "monospace", lineHeight: 1.1, margin: "4px 0" }}>
+                  {fallCountdown}s
+                </div>
+              </div>
+
+              {/* Explicit Disclaimer */}
+              <div style={{ backgroundColor: "rgba(229, 91, 60, 0.04)", border: "1px solid rgba(229, 91, 60, 0.15)", borderRadius: "4px", padding: "10px", textAlign: "left" }}>
+                <span style={{ fontSize: "9px", fontWeight: 700, color: "#E55B3C", textTransform: "uppercase" }}>
+                  ⚠️ CATATAN PROTOTIPE EKSPLISIT:
+                </span>
+                <p style={{ fontSize: "9px", color: "rgba(240, 237, 230, 0.5)", margin: "4px 0 0", lineHeight: 1.35 }}>
+                  Fitur ini menggunakan heuristik threshold kasar (impact & stillness). Ini BUKAN sistem tervalidasi klinis/lapangan. Akurasi & tingkat false-positive belum diukur sistematis. Jangan andalkan untuk keselamatan darurat.
+                </p>
+              </div>
+
+              <button
+                onClick={handleCancelFallAlert}
+                style={{
+                  width: "100%",
+                  padding: "12px 20px",
+                  backgroundColor: "rgba(240, 237, 230, 0.06)",
+                  color: "#fca5a5",
+                  border: "1px solid rgba(240, 237, 230, 0.15)",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.1)";
+                  e.currentTarget.style.borderColor = "rgba(239, 68, 68, 0.3)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(240, 237, 230, 0.06)";
+                  e.currentTarget.style.borderColor = "rgba(240, 237, 230, 0.15)";
+                }}
+              >
+                Batalkan Alarm (Batal SOS)
               </button>
             </div>
           </div>
