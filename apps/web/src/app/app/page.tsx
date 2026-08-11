@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import MapView from "@/components/MapView";
 import Navbar from "@/components/Navbar";
+import { setupGeofencingListener, registerWaypointGeofences, clearAllGeofences } from "../geofence";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ── Custom Tooltip for Elevation Profile Chart ────────────────────────────────
@@ -47,6 +48,23 @@ export default function Home() {
   const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number; timestamp: number } | null>(null);
   const [triggerCinematic, setTriggerCinematic] = useState<number | null>(null);
 
+  // Hike Session & SOS States
+  const [deviceId, setDeviceId] = useState<string>("");
+  const [activeSession, setActiveSession] = useState<any>(null);
+  
+  // Hike Session Form States
+  const [hikerName, setHikerName] = useState("");
+  const [emergencyEmail, setEmergencyEmail] = useState("");
+  const [estReturn, setEstReturn] = useState("");
+  const [bufferMins, setBufferMins] = useState(60);
+
+  // SOS States
+  const sosIntervalRef = useRef<any>(null);
+  const [sosHolding, setSosHolding] = useState(false);
+  const [sosProgress, setSosProgress] = useState(0);
+  const [sosTriggered, setSosTriggered] = useState(false);
+  const [sosCoordinates, setSosCoordinates] = useState<{ lat: number; lng: number } | null>(null);
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
   // Check mobile viewport dynamically
@@ -57,6 +75,30 @@ export default function Home() {
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Initialize device ID and active session from localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    
+    // Get or generate device ID
+    let cachedId = localStorage.getItem("rintis_device_id");
+    if (!cachedId) {
+      cachedId = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem("rintis_device_id", cachedId);
+    }
+    setDeviceId(cachedId);
+
+    // Get active session
+    const cachedSession = localStorage.getItem("rintis_active_session");
+    if (cachedSession) {
+      try {
+        const sessionObj = JSON.parse(cachedSession);
+        setActiveSession(sessionObj);
+      } catch (e) {
+        console.error("Failed to parse cached active session", e);
+      }
+    }
   }, []);
 
   const fetchTrailInfo = async () => {
@@ -148,6 +190,182 @@ export default function Home() {
     fetchTrailInfo();
     fetchVerdict();
   }, [activeSlug, apiUrl, mapRefreshKey]);
+
+  // Start hiking session action
+  const handleStartHike = async () => {
+    if (!hikerName.trim() || !emergencyEmail.trim() || !estReturn) {
+      alert("Harap lengkapi semua field formulir pendakian.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/trails/${activeSlug}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: deviceId,
+          hiker_name: hikerName,
+          emergency_contact_email: emergencyEmail,
+          estimated_return_at: new Date(estReturn).toISOString(),
+          buffer_minutes: bufferMins
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        const sessionData = result.session;
+        
+        // Save to state and cache
+        setActiveSession(sessionData);
+        localStorage.setItem("rintis_active_session", JSON.stringify(sessionData));
+
+        // Setup Geofencing listeners and targets
+        await setupGeofencingListener(activeSlug, deviceId, apiUrl);
+        const geoWps = waypoints.map(wp => ({
+          id: wp.id,
+          name: wp.name,
+          lat: wp.lat,
+          lng: wp.lng
+        }));
+        await registerWaypointGeofences(geoWps, 120);
+
+        alert("Pendakian dimulai! Geofencing aktif di perangkat Anda.");
+        fetchTrailInfo();
+      } else {
+        const errorText = await response.text();
+        alert(`Gagal memulai pendakian: ${errorText}`);
+      }
+    } catch (err) {
+      console.error("Start hike failed", err);
+      alert("Gagal menghubungi server untuk memulai pendakian.");
+    }
+  };
+
+  // Complete hiking session action
+  const handleCompleteHike = async () => {
+    try {
+      const response = await fetch(`${apiUrl}/trails/${activeSlug}/sessions/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: deviceId }),
+      });
+
+      if (response.ok) {
+        // Clear state and cache
+        setActiveSession(null);
+        localStorage.removeItem("rintis_active_session");
+
+        // Clear native geofences
+        await clearAllGeofences();
+
+        alert("Pendakian selesai! Terima kasih telah melapor kembali dengan selamat.");
+        
+        // Reset form inputs
+        setHikerName("");
+        setEmergencyEmail("");
+        setEstReturn("");
+        setBufferMins(60);
+
+        fetchTrailInfo();
+      } else {
+        alert("Gagal menyelesaikan sesi pendakian di server.");
+      }
+    } catch (err) {
+      console.error("Complete hike failed", err);
+      alert("Gagal menghubungi server.");
+    }
+  };
+
+  // Simulate checkin action (Web mockup simulation trigger)
+  const handleSimulateCheckin = async (waypointId: string, lat: number, lng: number) => {
+    try {
+      const response = await fetch(`${apiUrl}/trails/${activeSlug}/checkin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: deviceId,
+          waypoint_id: waypointId,
+          timestamp: new Date().toISOString(),
+          lat: lat,
+          lng: lng
+        }),
+      });
+
+      if (response.ok) {
+        alert("Simulasi geofence berhasil dikirim!");
+        fetchTrailInfo();
+      } else {
+        alert("Gagal mengirim simulasi checkin.");
+      }
+    } catch (err) {
+      console.error("Checkin simulation error", err);
+      alert("Gagal mengirim request simulasi.");
+    }
+  };
+
+  // SOS actions
+  const startSosTimer = () => {
+    setSosHolding(true);
+    setSosProgress(0);
+    
+    const startTime = Date.now();
+    sosIntervalRef.current = setInterval(() => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      if (elapsed >= 3) {
+        clearInterval(sosIntervalRef.current);
+        triggerEmergencySOS();
+      } else {
+        setSosProgress(elapsed);
+      }
+    }, 50);
+  };
+
+  const cancelSosTimer = () => {
+    setSosHolding(false);
+    setSosProgress(0);
+    if (sosIntervalRef.current) {
+      clearInterval(sosIntervalRef.current);
+    }
+  };
+
+  const triggerEmergencySOS = () => {
+    if (!navigator.geolocation) {
+      alert("Pencarian GPS tidak didukung di perangkat Anda.");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        setSosCoordinates({ lat, lng });
+        setSosTriggered(true);
+
+        try {
+          await fetch(`${apiUrl}/trails/${activeSlug}/sos`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              device_id: deviceId,
+              lat: lat,
+              lng: lng
+            }),
+          });
+        } catch (err) {
+          console.error("SOS report failed", err);
+        }
+        setSosHolding(false);
+        setSosProgress(0);
+      },
+      (error) => {
+        console.error("SOS GPS fetch failed", error);
+        alert("Gagal mendapatkan koordinat GPS. SOS dibatalkan.");
+        setSosHolding(false);
+        setSosProgress(0);
+      },
+      { enableHighAccuracy: true }
+    );
+  };
 
   // Extract chart data
   const elevationData = waypoints
@@ -297,6 +515,161 @@ export default function Home() {
             <h2 style={{ fontSize: "16px", fontWeight: 500, color: "rgba(240, 237, 230, 0.4)", fontStyle: "italic" }}>
               Belum di-import
             </h2>
+          </div>
+        )}
+      </div>
+
+      {/* Hike Session Control Panel */}
+      <div style={{ padding: "2rem 0 1.5rem", borderBottom: "1px solid rgba(240, 237, 230, 0.08)" }}>
+        <div style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "rgba(240, 237, 230, 0.4)", marginBottom: "1rem" }}>
+          Status Pendakian
+        </div>
+        
+        {activeSession ? (
+          <div style={{ backgroundColor: "rgba(16, 185, 129, 0.04)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: "4px", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#10b981", animation: "pulse 2s infinite" }} />
+              <span style={{ fontSize: "12px", fontWeight: 700, color: "#10b981", textTransform: "uppercase" }}>Pendakian Aktif</span>
+            </div>
+            
+            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.6)" }}>Nama Pendaki:</span>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: "#f0ede6" }}>{activeSession.hiker_name}</span>
+            </div>
+            
+            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.6)" }}>Estimasi Kembali:</span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#ef4444" }}>
+                {new Date(activeSession.estimated_return_at).toLocaleString("id-ID", { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </span>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+              <span style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.6)" }}>Kontak Basecamp:</span>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "#f0ede6" }}>{activeSession.emergency_contact_email}</span>
+            </div>
+
+            <button
+              onClick={handleCompleteHike}
+              style={{
+                marginTop: "6px",
+                width: "100%",
+                padding: "8px 12px",
+                backgroundColor: "rgba(239, 68, 68, 0.08)",
+                color: "#fca5a5",
+                border: "1px solid rgba(239, 68, 68, 0.3)",
+                borderRadius: "3px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.15)"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(239, 68, 68, 0.08)"}
+            >
+              Selesaikan Pendakian
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "9px", color: "rgba(240, 237, 230, 0.5)", textTransform: "uppercase" }}>Nama Lengkap</label>
+              <input
+                type="text"
+                placeholder="cth. John Doe"
+                value={hikerName}
+                onChange={(e) => setHikerName(e.target.value)}
+                style={{
+                  backgroundColor: "rgba(240, 237, 230, 0.02)",
+                  border: "1px solid rgba(240, 237, 230, 0.08)",
+                  borderRadius: "3px",
+                  padding: "6px 10px",
+                  color: "#f0ede6",
+                  fontSize: "12px",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "9px", color: "rgba(240, 237, 230, 0.5)", textTransform: "uppercase" }}>Email Kontak Basecamp / Darurat</label>
+              <input
+                type="email"
+                placeholder="cth. basecamp@merbabu.id"
+                value={emergencyEmail}
+                onChange={(e) => setEmergencyEmail(e.target.value)}
+                style={{
+                  backgroundColor: "rgba(240, 237, 230, 0.02)",
+                  border: "1px solid rgba(240, 237, 230, 0.08)",
+                  borderRadius: "3px",
+                  padding: "6px 10px",
+                  color: "#f0ede6",
+                  fontSize: "12px",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "9px", color: "rgba(240, 237, 230, 0.5)", textTransform: "uppercase" }}>Estimasi Waktu Kembali</label>
+              <input
+                type="datetime-local"
+                value={estReturn}
+                onChange={(e) => setEstReturn(e.target.value)}
+                style={{
+                  backgroundColor: "rgba(240, 237, 230, 0.02)",
+                  border: "1px solid rgba(240, 237, 230, 0.08)",
+                  borderRadius: "3px",
+                  padding: "6px 10px",
+                  color: "#f0ede6",
+                  fontSize: "12px",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "9px", color: "rgba(240, 237, 230, 0.5)", textTransform: "uppercase" }}>Buffer Alarm (Menit)</label>
+              <input
+                type="number"
+                value={bufferMins}
+                onChange={(e) => setBufferMins(Number(e.target.value))}
+                style={{
+                  backgroundColor: "rgba(240, 237, 230, 0.02)",
+                  border: "1px solid rgba(240, 237, 230, 0.08)",
+                  borderRadius: "3px",
+                  padding: "6px 10px",
+                  color: "#f0ede6",
+                  fontSize: "12px",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            <button
+              onClick={handleStartHike}
+              style={{
+                marginTop: "4px",
+                width: "100%",
+                padding: "10px 16px",
+                backgroundColor: "#E55B3C",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "3px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                transition: "all 0.2s ease"
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#ff6a4a"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#E55B3C"}
+            >
+              Mulai Pendakian
+            </button>
           </div>
         )}
       </div>
@@ -545,6 +918,48 @@ export default function Home() {
                         >
                           {wp.waypoint_type}
                         </span>
+
+                        {/* Active Check-ins (Pendaki terakhir konfirmasi) */}
+                        {activeSession && wp.active_checkins && wp.active_checkins.length > 0 && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "4px" }}>
+                            {wp.active_checkins.map((c: any, cIdx: number) => {
+                              const date = new Date(c.checked_in_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+                              return (
+                                <div key={cIdx} style={{ fontSize: "9px", color: "#10b981", display: "flex", alignItems: "center", gap: "4px", fontWeight: 500 }}>
+                                  <span style={{ display: "inline-block", width: "4px", height: "4px", borderRadius: "50%", backgroundColor: "#10b981" }} />
+                                  <span>{c.hiker_name} ({date})</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Web Geofence Simulation Button */}
+                        {activeSession && (
+                          <button
+                            onClick={() => handleSimulateCheckin(wp.id, wp.lat, wp.lng)}
+                            style={{
+                              alignSelf: "flex-start",
+                              marginTop: "4px",
+                              fontSize: "8.5px",
+                              backgroundColor: "rgba(229, 91, 60, 0.08)",
+                              color: "#F38165",
+                              border: "1px solid rgba(229, 91, 60, 0.2)",
+                              padding: "2px 6px",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              transition: "all 0.2s ease",
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.15)";
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.08)";
+                            }}
+                          >
+                            📍 Simulasikan Masuk
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -902,6 +1317,123 @@ export default function Home() {
                 {renderSidebarContent()}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Floating SOS button */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: "160px",
+            right: "24px",
+            zIndex: 40,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: "6px"
+          }}
+        >
+          <button
+            onMouseDown={startSosTimer}
+            onMouseUp={cancelSosTimer}
+            onMouseLeave={cancelSosTimer}
+            onTouchStart={startSosTimer}
+            onTouchEnd={cancelSosTimer}
+            style={{
+              width: "60px",
+              height: "60px",
+              borderRadius: "50%",
+              backgroundColor: sosHolding ? "rgba(239, 68, 68, 0.9)" : "rgba(220, 38, 38, 0.7)",
+              backdropFilter: "blur(8px)",
+              border: "2px solid #ef4444",
+              color: "#ffffff",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "14px",
+              fontWeight: 800,
+              cursor: "pointer",
+              boxShadow: sosHolding 
+                ? "0 0 25px rgba(239, 68, 68, 0.8)" 
+                : "0 4px 12px rgba(239, 68, 68, 0.3)",
+              userSelect: "none",
+              transition: "transform 0.1s ease, background-color 0.2s ease",
+              transform: sosHolding ? `scale(${1 + (sosProgress / 3) * 0.15})` : "scale(1)",
+            }}
+          >
+            {sosHolding ? `${Math.ceil(3 - sosProgress)}s` : "SOS"}
+          </button>
+          {sosHolding && (
+            <div style={{ fontSize: "9px", color: "#fca5a5", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", backgroundColor: "rgba(0,0,0,0.6)", padding: "2px 6px", borderRadius: "3px" }}>
+              Tahan Tombol
+            </div>
+          )}
+        </div>
+
+        {/* SOS Confirmation Modal Overlay */}
+        {sosTriggered && (
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.85)",
+              backdropFilter: "blur(8px)",
+              zIndex: 100,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "24px"
+            }}
+          >
+            <div
+              style={{
+                maxWidth: "400px",
+                backgroundColor: "#161210",
+                border: "2px solid #ef4444",
+                borderRadius: "6px",
+                padding: "24px",
+                textAlign: "center",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: "16px",
+                boxShadow: "0 10px 40px rgba(239, 68, 68, 0.2)"
+              }}
+            >
+              <div style={{ fontSize: "40px" }}>🚨</div>
+              <div>
+                <h2 style={{ fontSize: "18px", fontWeight: 700, color: "#ef4444", margin: 0 }}>SOS DARURAT TERKIRIM</h2>
+                <p style={{ fontSize: "12px", color: "rgba(240, 237, 230, 0.7)", marginTop: "8px", lineHeight: 1.5 }}>
+                  Sinyal SOS manual Anda telah didaftarkan ke server basecamp pendakian.
+                </p>
+                {sosCoordinates && (
+                  <div style={{ backgroundColor: "rgba(240, 237, 230, 0.03)", border: "1px solid rgba(240, 237, 230, 0.08)", padding: "8px", borderRadius: "4px", margin: "12px 0 4px", fontFamily: "monospace", fontSize: "11px", color: "#F38165" }}>
+                    LAT: {sosCoordinates.lat.toFixed(6)}<br />
+                    LNG: {sosCoordinates.lng.toFixed(6)}
+                  </div>
+                )}
+                <p style={{ fontSize: "10px", color: "rgba(240, 237, 230, 0.4)", margin: "8px 0 0" }}>
+                  Tetap tenang di lokasi Anda dan hemat baterai perangkat Anda.
+                </p>
+              </div>
+              <button
+                onClick={() => setSosTriggered(false)}
+                style={{
+                  width: "100%",
+                  padding: "10px 16px",
+                  backgroundColor: "rgba(240, 237, 230, 0.1)",
+                  color: "#f0ede6",
+                  border: "1px solid rgba(240, 237, 230, 0.2)",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  textTransform: "uppercase"
+                }}
+              >
+                Tutup & Kembali
+              </button>
+            </div>
           </div>
         )}
       </main>

@@ -124,6 +124,40 @@ async def get_trail(slug: str):
     wp_res = supabase_client.table("waypoints").select("*").eq("trail_id", trail_id).execute()
     waypoints = wp_res.data or []
 
+    # 2.5 Fetch recent check-ins for active sessions on this trail
+    checkins_by_waypoint: dict[str, list] = {}
+    try:
+        active_sessions_res = (
+            supabase_client
+            .table("hike_sessions")
+            .select("id, hiker_name")
+            .eq("trail_id", trail_id)
+            .eq("status", "active")
+            .execute()
+        )
+        active_session_ids = [s["id"] for s in active_sessions_res.data] if active_sessions_res.data else []
+        
+        if active_session_ids:
+            checkins_res = (
+                supabase_client
+                .table("hiker_checkins")
+                .select("waypoint_id, checked_in_at, session_id")
+                .in_("session_id", active_session_ids)
+                .order("checked_in_at", desc=True)
+                .execute()
+            )
+            session_hiker_name = {s["id"]: s["hiker_name"] for s in active_sessions_res.data}
+            
+            for c in (checkins_res.data or []):
+                wp_id = c["waypoint_id"]
+                c_entry = {
+                    "hiker_name": session_hiker_name.get(c["session_id"], "Pendaki"),
+                    "checked_in_at": c["checked_in_at"]
+                }
+                checkins_by_waypoint.setdefault(wp_id, []).append(c_entry)
+    except Exception as exc:
+        print(f"[Check-ins] Failed to fetch active checkins for trail {trail_id}: {exc}")
+
     # 3. Fetch all condition_reports for this trail (one query, split in Python)
     cr_res = (
         supabase_client
@@ -170,7 +204,7 @@ async def get_trail(slug: str):
         }
     })
 
-    # Add Waypoint Point features (with embedded condition_reports)
+    # Add Waypoint Point features (with embedded condition_reports and active check-ins)
     for wp in waypoints:
         wp_id = wp["id"]
         features.append({
@@ -188,6 +222,7 @@ async def get_trail(slug: str):
                 "osm_version": wp.get("osm_version"),
                 "osm_last_edited": wp.get("osm_last_edited"),
                 "condition_reports": reports_by_waypoint.get(wp_id, []),
+                "active_checkins": checkins_by_waypoint.get(wp_id, []),
             }
         })
 
