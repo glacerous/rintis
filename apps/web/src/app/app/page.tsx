@@ -40,6 +40,10 @@ export default function Home() {
   const [isMobile, setIsMobile] = useState(false);
   const [drawerExpanded, setDrawerExpanded] = useState(false);
 
+  const [verdict, setVerdict] = useState<{ status: string; reason: string } | null>(null);
+  const [verdictLoading, setVerdictLoading] = useState(false);
+  const [generalClaims, setGeneralClaims] = useState<any[]>([]);
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
   // Check mobile viewport dynamically
@@ -65,6 +69,7 @@ export default function Home() {
           .filter((f: any) => f.properties?.type === "waypoint")
           .map((f: any) => f.properties);
         setWaypoints(wps);
+        setGeneralClaims(data.general_claims || []);
       }
     } catch (err) {
       console.error("Failed to fetch sidebar info", err);
@@ -73,9 +78,43 @@ export default function Home() {
     }
   };
 
+  const fetchVerdict = async () => {
+    if (!activeSlug) return;
+    setVerdictLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/trails/${activeSlug}/verdict`);
+      if (res.ok) {
+        const data = await res.json();
+        setVerdict(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch trail verdict", err);
+    } finally {
+      setVerdictLoading(false);
+    }
+  };
+
+  const handleVerifyReport = async (reportId: string, vote: "still_accurate" | "outdated") => {
+    try {
+      const res = await fetch(`${apiUrl}/condition-reports/${reportId}/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vote }),
+      });
+      if (res.ok) {
+        setMapRefreshKey(prev => prev + 1);
+        fetchTrailInfo();
+        fetchVerdict();
+      }
+    } catch (err) {
+      console.error("Failed to submit verification vote", err);
+    }
+  };
+
   useEffect(() => {
     fetchTrailInfo();
-  }, [activeSlug, apiUrl]);
+    fetchVerdict();
+  }, [activeSlug, apiUrl, mapRefreshKey]);
 
   // Extract chart data
   const elevationData = waypoints
@@ -110,6 +149,69 @@ export default function Home() {
             <p style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.5)", marginTop: "4px", fontWeight: 500, letterSpacing: "0.02em" }}>
               {trailMeta.region}
             </p>
+
+            {/* Verdict Card */}
+            {verdict && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  padding: "12px 16px",
+                  borderRadius: "4px",
+                  border: "1px solid " + (
+                    verdict.status === "TIDAK DISARANKAN" ? "rgba(239, 68, 68, 0.2)" :
+                    verdict.status === "PERHATIAN" ? "rgba(249, 115, 22, 0.2)" :
+                    "rgba(16, 185, 129, 0.2)"
+                  ),
+                  backgroundColor: (
+                    verdict.status === "TIDAK DISARANKAN" ? "rgba(239, 68, 68, 0.05)" :
+                    verdict.status === "PERHATIAN" ? "rgba(249, 115, 22, 0.05)" :
+                    "rgba(16, 185, 129, 0.05)"
+                  ),
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span
+                    style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      backgroundColor: (
+                        verdict.status === "TIDAK DISARANKAN" ? "#ef4444" :
+                        verdict.status === "PERHATIAN" ? "#f97316" :
+                        "#10b981"
+                      ),
+                      display: "inline-block",
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      color: (
+                        verdict.status === "TIDAK DISARANKAN" ? "#fca5a5" :
+                        verdict.status === "PERHATIAN" ? "#fdbb2d" :
+                        "#a7f3d0"
+                      ),
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    KONDISI: {verdict.status}
+                  </span>
+                </div>
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "rgba(240, 237, 230, 0.7)",
+                    marginTop: "6px",
+                    lineHeight: 1.45,
+                    margin: 0,
+                  }}
+                >
+                  {verdict.reason}
+                </p>
+              </div>
+            )}
 
             {/* Trail Stats Badges */}
             <div style={{ display: "flex", gap: "16px", marginTop: "20px", borderTop: "1px solid rgba(240, 237, 230, 0.08)", paddingTop: "16px" }}>
@@ -217,6 +319,94 @@ export default function Home() {
         </button>
       </div>
 
+      {/* General Claims Section */}
+      {generalClaims.length > 0 && (
+        <div style={{ padding: "2rem 0 1.5rem", borderBottom: "1px solid rgba(240, 237, 230, 0.08)" }}>
+          <div style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "rgba(240, 237, 230, 0.4)", marginBottom: "1rem" }}>
+            Laporan Umum Rute ({generalClaims.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {generalClaims.map((r: any, rIdx: number) => {
+              let badgeColor = "rgba(240, 237, 230, 0.4)";
+              if (r.confidence_score >= 0.7) badgeColor = "#10b981";
+              else if (r.confidence_score >= 0.4) badgeColor = "#f97316";
+
+              let sourceLabel = r.source_type || "Source";
+              if (sourceLabel === "official_govt") sourceLabel = "Pemerintah";
+              else if (sourceLabel === "established_media") sourceLabel = "Media";
+              else if (sourceLabel === "verified_community") sourceLabel = "Komunitas";
+              else if (sourceLabel === "individual_post") sourceLabel = "Individu";
+
+              const dateStr = r.published_or_scraped_at 
+                ? new Date(r.published_or_scraped_at).toLocaleDateString("id-ID", { day: 'numeric', month: 'short' }) 
+                : "-";
+
+              return (
+                <div
+                  key={rIdx}
+                  style={{
+                    padding: "8px",
+                    borderRadius: "4px",
+                    backgroundColor: "rgba(240, 237, 230, 0.02)",
+                    border: "1px solid rgba(240, 237, 230, 0.04)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", marginBottom: "4px" }}>
+                    <span style={{ fontSize: "7px", fontWeight: 700, color: badgeColor, border: `1px solid ${badgeColor}`, padding: "1px 3.5px", borderRadius: "2px" }}>
+                      C: {Math.round(r.confidence_score * 100)}%
+                    </span>
+                    <span style={{ fontSize: "7.5px", color: "rgba(240, 237, 230, 0.45)", fontWeight: 600 }}>
+                      {sourceLabel} • {dateStr}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.8)", fontWeight: 400, lineHeight: 1.35 }}>
+                    {r.claim_text}
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", marginTop: "6px", alignItems: "center" }}>
+                    <a
+                      href={r.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: "8.5px", color: "#E55B3C", textDecoration: "none" }}
+                    >
+                      Sumber ↗
+                    </a>
+                    <button
+                      onClick={() => handleVerifyReport(r.id, "still_accurate")}
+                      style={{
+                        fontSize: "8.5px",
+                        backgroundColor: "rgba(16, 185, 129, 0.1)",
+                        color: "#10b981",
+                        border: "1px solid rgba(16, 185, 129, 0.2)",
+                        padding: "2px 6px",
+                        borderRadius: "3px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Masih Akurat
+                    </button>
+                    <button
+                      onClick={() => handleVerifyReport(r.id, "outdated")}
+                      style={{
+                        fontSize: "8.5px",
+                        backgroundColor: "rgba(239, 68, 68, 0.1)",
+                        color: "#ef4444",
+                        border: "1px solid rgba(239, 68, 68, 0.2)",
+                        padding: "2px 6px",
+                        borderRadius: "3px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Sudah Berubah
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Waypoints List */}
       <div style={{ padding: "2.5rem 0 1.5rem" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
@@ -245,71 +435,156 @@ export default function Home() {
                   key={idx}
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
+                    flexDirection: "column",
                     padding: "14px 0",
                     borderBottom: "1px solid rgba(240, 237, 230, 0.05)",
-                    gap: "1rem",
+                    gap: "8px",
+                    width: "100%",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
-                    {/* Left Accent Strip */}
-                    <div
-                      style={{
-                        width: "2px",
-                        height: "16px",
-                        backgroundColor: accentColor,
-                        borderRadius: "1px",
-                        flexShrink: 0,
-                      }}
-                    />
-                    {/* Meta details */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0, overflow: "hidden" }}>
-                      <span
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: "1rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1, minWidth: 0 }}>
+                      {/* Left Accent Strip */}
+                      <div
                         style={{
-                          fontSize: "13.5px",
-                          fontWeight: isPeak ? 400 : 500,
-                          color: "#f0ede6",
-                          fontFamily: isPeak ? "var(--font-serif)" : "var(--font-sans)",
-                          fontStyle: isPeak ? "italic" : "normal",
-                          letterSpacing: isPeak ? "0.01em" : "0",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
+                          width: "2px",
+                          height: "16px",
+                          backgroundColor: accentColor,
+                          borderRadius: "1px",
+                          flexShrink: 0,
                         }}
-                      >
-                        {wp.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "8.5px",
-                          fontWeight: 600,
-                          color: accentColor,
-                          letterSpacing: "0.12em",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {wp.waypoint_type}
-                      </span>
+                      />
+                      {/* Meta details */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0, overflow: "hidden" }}>
+                        <span
+                          style={{
+                            fontSize: "13.5px",
+                            fontWeight: isPeak ? 400 : 500,
+                            color: "#f0ede6",
+                            fontFamily: isPeak ? "var(--font-serif)" : "var(--font-sans)",
+                            fontStyle: isPeak ? "italic" : "normal",
+                            letterSpacing: isPeak ? "0.01em" : "0",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {wp.name}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "8.5px",
+                            fontWeight: 600,
+                            color: accentColor,
+                            letterSpacing: "0.12em",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {wp.waypoint_type}
+                        </span>
+                      </div>
                     </div>
+
+                    {/* Tabular elevation */}
+                    {wp.elevation_m ? (
+                      <div
+                        style={{
+                          fontSize: "12px",
+                          fontWeight: 500,
+                          color: "rgba(240, 237, 230, 0.7)",
+                          fontFamily: "var(--font-sans)",
+                          fontVariantNumeric: "tabular-nums",
+                          textAlign: "right",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {wp.elevation_m} mdpl
+                      </div>
+                    ) : null}
                   </div>
 
-                  {/* Tabular elevation */}
-                  {wp.elevation_m ? (
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        fontWeight: 500,
-                        color: "rgba(240, 237, 230, 0.7)",
-                        fontFamily: "var(--font-sans)",
-                        fontVariantNumeric: "tabular-nums",
-                        textAlign: "right",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {wp.elevation_m} mdpl
+                  {/* Waypoint Condition Reports List */}
+                  {wp.condition_reports && wp.condition_reports.length > 0 && (
+                    <div style={{ paddingLeft: "12px", borderLeft: "1px dashed rgba(240, 237, 230, 0.1)", display: "flex", flexDirection: "column", gap: "6px", width: "100%", marginTop: "4px" }}>
+                      {wp.condition_reports.map((r: any, rIdx: number) => {
+                        let badgeColor = "rgba(240, 237, 230, 0.4)";
+                        if (r.confidence_score >= 0.7) badgeColor = "#10b981";
+                        else if (r.confidence_score >= 0.4) badgeColor = "#f97316";
+
+                        let sourceLabel = r.source_type || "Source";
+                        if (sourceLabel === "official_govt") sourceLabel = "Pemerintah";
+                        else if (sourceLabel === "established_media") sourceLabel = "Media";
+                        else if (sourceLabel === "verified_community") sourceLabel = "Komunitas";
+                        else if (sourceLabel === "individual_post") sourceLabel = "Individu";
+
+                        const dateStr = r.published_or_scraped_at 
+                          ? new Date(r.published_or_scraped_at).toLocaleDateString("id-ID", { day: 'numeric', month: 'short' }) 
+                          : "-";
+
+                        return (
+                          <div
+                            key={rIdx}
+                            style={{
+                              padding: "8px",
+                              borderRadius: "4px",
+                              backgroundColor: "rgba(240, 237, 230, 0.02)",
+                              border: "1px solid rgba(240, 237, 230, 0.04)",
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "4px", marginBottom: "4px" }}>
+                              <span style={{ fontSize: "7px", fontWeight: 700, color: badgeColor, border: `1px solid ${badgeColor}`, padding: "1px 3.5px", borderRadius: "2px" }}>
+                                C: {Math.round(r.confidence_score * 100)}%
+                              </span>
+                              <span style={{ fontSize: "7.5px", color: "rgba(240, 237, 230, 0.45)", fontWeight: 600 }}>
+                                {sourceLabel} • {dateStr}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "11px", color: "rgba(240, 237, 230, 0.8)", fontWeight: 400, lineHeight: 1.35 }}>
+                              {r.claim_text}
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", marginTop: "6px", alignItems: "center" }}>
+                              <a
+                                href={r.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: "8.5px", color: "#E55B3C", textDecoration: "none" }}
+                              >
+                                Sumber ↗
+                              </a>
+                              <button
+                                onClick={() => handleVerifyReport(r.id, "still_accurate")}
+                                style={{
+                                  fontSize: "8.5px",
+                                  backgroundColor: "rgba(16, 185, 129, 0.1)",
+                                  color: "#10b981",
+                                  border: "1px solid rgba(16, 185, 129, 0.2)",
+                                  padding: "2px 6px",
+                                  borderRadius: "3px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Masih Akurat
+                              </button>
+                              <button
+                                onClick={() => handleVerifyReport(r.id, "outdated")}
+                                style={{
+                                  fontSize: "8.5px",
+                                  backgroundColor: "rgba(239, 68, 68, 0.1)",
+                                  color: "#ef4444",
+                                  border: "1px solid rgba(239, 68, 68, 0.2)",
+                                  padding: "2px 6px",
+                                  borderRadius: "3px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Sudah Berubah
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ) : null}
+                  )}
                 </div>
               );
             })}
@@ -374,7 +649,16 @@ export default function Home() {
             backgroundColor: "#0c0a09",
           }}
         >
-          <MapView slug={activeSlug} apiUrl={apiUrl} refreshKey={mapRefreshKey} />
+          <MapView 
+            slug={activeSlug} 
+            apiUrl={apiUrl} 
+            refreshKey={mapRefreshKey} 
+            onVerifySuccess={() => {
+              setMapRefreshKey(prev => prev + 1);
+              fetchTrailInfo();
+              fetchVerdict();
+            }}
+          />
         </section>
 
         {/* RESPONSIVE MOBILE BOTTOM SHEET DRAWER */}
@@ -413,8 +697,31 @@ export default function Home() {
                 <div style={{ fontSize: "9px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "#E55B3C" }}>
                   Jalur Pendakian
                 </div>
-                <div style={{ fontSize: "15px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: "#f0ede6", marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
                   {trailMeta ? trailMeta.name : "Memuat..."}
+                  {verdict && (
+                    <span
+                      style={{
+                        padding: "2px 6px",
+                        fontSize: "8px",
+                        fontWeight: 700,
+                        borderRadius: "3px",
+                        textTransform: "uppercase",
+                        backgroundColor: (
+                          verdict.status === "TIDAK DISARANKAN" ? "rgba(239, 68, 68, 0.2)" :
+                          verdict.status === "PERHATIAN" ? "rgba(249, 115, 22, 0.2)" :
+                          "rgba(16, 185, 129, 0.2)"
+                        ),
+                        color: (
+                          verdict.status === "TIDAK DISARANKAN" ? "#fca5a5" :
+                          verdict.status === "PERHATIAN" ? "#fdbb2d" :
+                          "#a7f3d0"
+                        ),
+                      }}
+                    >
+                      {verdict.status}
+                    </span>
+                  )}
                 </div>
               </div>
               <button

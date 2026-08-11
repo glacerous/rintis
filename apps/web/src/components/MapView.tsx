@@ -7,9 +7,10 @@ interface MapViewProps {
   slug: string;
   apiUrl: string;
   refreshKey?: number;
+  onVerifySuccess?: () => void;
 }
 
-export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) {
+export default function MapView({ slug, apiUrl, refreshKey = 0, onVerifySuccess }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
@@ -304,7 +305,17 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
                         <span class="text-[7px] text-slate-500 font-bold uppercase">${sourceLabel} • ${dateStr}</span>
                       </div>
                       <div class="text-slate-200 font-normal">${r.claim_text}</div>
-                      <a href="${r.source_url}" target="_blank" rel="noopener noreferrer" class="text-[8px] text-[#E55B3C] hover:underline block mt-0.5 pointer-events-auto">Buka Sumber ↗</a>
+                      <div class="flex items-center justify-between mt-1">
+                        <a href="${r.source_url}" target="_blank" rel="noopener noreferrer" class="text-[8px] text-[#E55B3C] hover:underline pointer-events-auto">Buka Sumber ↗</a>
+                        <div class="flex items-center gap-1.5">
+                          <button class="btn-verify-accurate pointer-events-auto text-[7px] bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-400 font-semibold px-1 py-0.5 rounded border border-emerald-900/40 cursor-pointer" data-report-id="${r.id}">
+                            Masih Akurat
+                          </button>
+                          <button class="btn-verify-outdated pointer-events-auto text-[7px] bg-red-950/60 hover:bg-red-900/60 text-red-400 font-semibold px-1 py-0.5 rounded border border-red-900/40 cursor-pointer" data-report-id="${r.id}">
+                            Sudah Berubah
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   `;
                 }).join("")}
@@ -363,7 +374,45 @@ export default function MapView({ slug, apiUrl, refreshKey = 0 }: MapViewProps) 
     };
 
     fetchTrail();
-  }, [slug, apiUrl, refreshKey]);
+
+    const mapContainer = mapContainerRef.current;
+    let handleMapContainerClick: (e: MouseEvent) => void;
+    if (mapContainer) {
+      handleMapContainerClick = async (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains("btn-verify-accurate") || target.classList.contains("btn-verify-outdated")) {
+          const reportId = target.getAttribute("data-report-id");
+          const vote = target.classList.contains("btn-verify-accurate") ? "still_accurate" : "outdated";
+          if (reportId) {
+            target.setAttribute("disabled", "true");
+            try {
+              const res = await fetch(`${apiUrl}/condition-reports/${reportId}/verify`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ vote }),
+              });
+              if (res.ok) {
+                if (onVerifySuccess) {
+                  onVerifySuccess();
+                }
+              }
+            } catch (err) {
+              console.error("Failed to submit verification vote", err);
+            } finally {
+              target.removeAttribute("disabled");
+            }
+          }
+        }
+      };
+      mapContainer.addEventListener("click", handleMapContainerClick);
+    }
+
+    return () => {
+      if (mapContainer && handleMapContainerClick) {
+        mapContainer.removeEventListener("click", handleMapContainerClick);
+      }
+    };
+  }, [slug, apiUrl, refreshKey, onVerifySuccess]);
 
   if (!maptilerKey) {
     return (

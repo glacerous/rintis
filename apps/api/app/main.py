@@ -1,7 +1,7 @@
 # Trigger reload to parse env
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import trails, conditions
+from app.routers import trails, conditions, condition_reports
 
 app = FastAPI(
     title="Rintis API",
@@ -21,6 +21,7 @@ app.add_middleware(
 # Mount Routers
 app.include_router(trails.router, prefix="/api", tags=["Trails"])
 app.include_router(conditions.router, prefix="/api", tags=["Conditions"])
+app.include_router(condition_reports.router, prefix="/api", tags=["Condition Reports"])
 
 @app.get("/")
 async def root():

@@ -128,7 +128,7 @@ async def get_trail(slug: str):
     cr_res = (
         supabase_client
         .table("condition_reports")
-        .select("waypoint_id, claim_text, claim_type, confidence_score, source_url, source_type, published_or_scraped_at, status")
+        .select("id, waypoint_id, claim_text, claim_type, confidence_score, source_url, source_type, published_or_scraped_at, status")
         .eq("trail_id", trail_id)
         .order("confidence_score", desc=True)
         .execute()
@@ -141,6 +141,7 @@ async def get_trail(slug: str):
     for r in all_reports:
         wp_id = r.get("waypoint_id")
         entry = {
+            "id": r["id"],
             "claim_text": r["claim_text"],
             "claim_type": r["claim_type"],
             "confidence_score": r["confidence_score"],
@@ -194,4 +195,69 @@ async def get_trail(slug: str):
         "type": "FeatureCollection",
         "features": features,
         "general_claims": general_claims,   # trail-level claims (waypoint_id IS NULL)
+    }
+
+@router.get("/{slug}/verdict")
+async def get_trail_verdict(slug: str):
+    """
+    Synthesize all active condition reports for a trail to produce a decision verdict:
+    - 'AMAN' / 'PERHATIAN' / 'TIDAK DISARANKAN' + a 1-2 sentence reason.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if not supabase_client:
+        raise HTTPException(
+            status_code=500,
+            detail="Supabase client is not configured."
+        )
+
+    # 1. Fetch trail
+    trail_res = supabase_client.table("trails").select("id, name").eq("slug", slug).execute()
+    if not trail_res.data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Trail with slug '{slug}' not found."
+        )
+
+    trail = trail_res.data[0]
+    trail_id = trail["id"]
+    trail_name = trail["name"]
+
+    # 2. Fetch active hazard/closure reports (within last 30 days, status != 'disputed')
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    cr_res = (
+        supabase_client
+        .table("condition_reports")
+        .select("claim_text, claim_type, confidence_score, published_or_scraped_at, status")
+        .eq("trail_id", trail_id)
+        .in_("claim_type", ["hazard", "closure"])
+        .neq("status", "disputed")
+        .gte("published_or_scraped_at", cutoff)
+        .order("confidence_score", desc=True)
+        .execute()
+    )
+    active_reports = cr_res.data or []
+
+    # 3. Apply Decision Logic
+    high_conf_reports = [r for r in active_reports if r["confidence_score"] > 0.6]
+    med_conf_reports = [r for r in active_reports if 0.3 <= r["confidence_score"] <= 0.6]
+
+    if high_conf_reports:
+        verdict_status = "TIDAK DISARANKAN"
+        top_report = high_conf_reports[0]
+        claim_desc = top_report["claim_text"]
+        reason = f"Pendakian ke {trail_name} saat ini tidak disarankan karena terdapat laporan bahaya/penutupan dengan tingkat keyakinan tinggi: \"{claim_desc}\"."
+    elif med_conf_reports:
+        verdict_status = "PERHATIAN"
+        top_report = med_conf_reports[0]
+        claim_desc = top_report["claim_text"]
+        reason = f"Pendakian ke {trail_name} perlu kewaspadaan ekstra. Terdapat laporan kondisi terverifikasi sebagian: \"{claim_desc}\"."
+    else:
+        verdict_status = "AMAN"
+        reason = f"Tidak ditemukan laporan bahaya atau penutupan jalur yang signifikan dalam 30 hari terakhir. Jalur {trail_name} aman untuk didaki berdasarkan laporan terkini."
+
+    return {
+        "status": verdict_status,
+        "reason": reason
     }

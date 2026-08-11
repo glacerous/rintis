@@ -54,6 +54,7 @@ def compute_confidence(
     waypoint_id: Optional[str],
     trail_id: str,
     current_source_url: str,
+    condition_report_id: Optional[str] = None,
 ) -> float:
     """
     Compute a [0, 1] confidence score for a condition report.
@@ -66,6 +67,7 @@ def compute_confidence(
     waypoint_id           : UUID of the matched waypoint, or None (general claim)
     trail_id              : UUID of the parent trail (needed for corroboration query)
     current_source_url    : The URL of the report currently being scored
+    condition_report_id    : Optional UUID of the report to query its community verification votes
 
     Returns
     -------
@@ -77,6 +79,25 @@ def compute_confidence(
     s4 = _track_record(source_type)
 
     score = W1 * s1 + W2 * s2 + W3 * s3 + W4 * s4
+
+    # Apply community verification modifier if report ID is provided
+    if condition_report_id and supabase_client:
+        try:
+            votes_res = (
+                supabase_client
+                .table("report_verifications")
+                .select("vote")
+                .eq("condition_report_id", condition_report_id)
+                .execute()
+            )
+            votes = votes_res.data or []
+            v_accurate = sum(1 for v in votes if v["vote"] == "still_accurate")
+            v_outdated = sum(1 for v in votes if v["vote"] == "outdated")
+            
+            modifier = (2.0 * (v_accurate + 1)) / (v_accurate + v_outdated + 2)
+            score = score * modifier
+        except Exception as exc:
+            print(f"[Confidence] Failed to fetch votes for report {condition_report_id}: {exc}")
 
     return round(max(0.0, min(1.0, score)), 4)
 
