@@ -8,17 +8,110 @@ interface MapViewProps {
   apiUrl: string;
   refreshKey?: number;
   onVerifySuccess?: () => void;
+  flyToTarget?: { lng: number; lat: number; timestamp: number } | null;
+  triggerCinematic?: number | null;
+  sortedWaypoints?: any[];
 }
 
-export default function MapView({ slug, apiUrl, refreshKey = 0, onVerifySuccess }: MapViewProps) {
+export default function MapView({ 
+  slug, 
+  apiUrl, 
+  refreshKey = 0, 
+  onVerifySuccess,
+  flyToTarget,
+  triggerCinematic,
+  sortedWaypoints
+}: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
+  const cinematicActiveRef = useRef(false);
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [maptilerKey, setMaptilerKey] = useState<string>("");
   const [trailMeta, setTrailMeta] = useState<{ name: string; region: string } | null>(null);
+
+  // Effect to fly to a target waypoint when selected from chart
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !flyToTarget) return;
+    map.flyTo({
+      center: [flyToTarget.lng, flyToTarget.lat],
+      zoom: 14.5,
+      pitch: 65,
+      bearing: map.getBearing(),
+      duration: 1800,
+      essential: true
+    });
+  }, [flyToTarget]);
+
+  // Effect to run automated cinematic flythrough along waypoints
+  useEffect(() => {
+    if (triggerCinematic && sortedWaypoints && sortedWaypoints.length > 0) {
+      cinematicActiveRef.current = true;
+      
+      const runCinematicFlythrough = async () => {
+        const map = mapRef.current;
+        if (!map) return;
+
+        // Save original controls enabled status
+        const controls = {
+          dragPan: map.dragPan.isEnabled(),
+          scrollZoom: map.scrollZoom.isEnabled(),
+          doubleClickZoom: map.doubleClickZoom.isEnabled(),
+          boxZoom: map.boxZoom.isEnabled(),
+          dragRotate: map.dragRotate.isEnabled()
+        };
+
+        // Disable user interaction during cinematic preview
+        map.dragPan.disable();
+        map.scrollZoom.disable();
+        map.doubleClickZoom.disable();
+        map.boxZoom.disable();
+        map.dragRotate.disable();
+
+        try {
+          for (let i = 0; i < sortedWaypoints.length; i++) {
+            if (!cinematicActiveRef.current) break;
+            const wp = sortedWaypoints[i];
+            const lng = wp.lng;
+            const lat = wp.lat;
+            if (typeof lng !== "number" || typeof lat !== "number") continue;
+
+            const bearing = -25 + (i * (180 / sortedWaypoints.length)); // smoothly rotate bearing
+
+            map.flyTo({
+              center: [lng, lat],
+              zoom: 14.5,
+              pitch: 65,
+              bearing: bearing,
+              duration: 3000,
+              essential: true
+            });
+
+            // Wait for duration segment
+            await new Promise((resolve) => setTimeout(resolve, 3200));
+          }
+        } catch (e) {
+          console.error("Cinematic flythrough error", e);
+        } finally {
+          // Re-enable controls
+          if (controls.dragPan) map.dragPan.enable();
+          if (controls.scrollZoom) map.scrollZoom.enable();
+          if (controls.doubleClickZoom) map.doubleClickZoom.enable();
+          if (controls.boxZoom) map.boxZoom.enable();
+          if (controls.dragRotate) map.dragRotate.enable();
+        }
+      };
+
+      runCinematicFlythrough();
+    }
+
+    return () => {
+      cinematicActiveRef.current = false;
+    };
+  }, [triggerCinematic, sortedWaypoints]);
 
   useEffect(() => {
     const key = process.env.NEXT_PUBLIC_MAPTILER_KEY || "";

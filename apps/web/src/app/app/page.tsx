@@ -44,6 +44,9 @@ export default function Home() {
   const [verdictLoading, setVerdictLoading] = useState(false);
   const [generalClaims, setGeneralClaims] = useState<any[]>([]);
 
+  const [flyToTarget, setFlyToTarget] = useState<{ lng: number; lat: number; timestamp: number } | null>(null);
+  const [triggerCinematic, setTriggerCinematic] = useState<number | null>(null);
+
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
   // Check mobile viewport dynamically
@@ -65,9 +68,39 @@ export default function Home() {
         const data = await res.json();
         const route = data.features.find((f: any) => f.properties?.type === "route");
         if (route) setTrailMeta(route.properties);
+        
         const wps = data.features
           .filter((f: any) => f.properties?.type === "waypoint")
-          .map((f: any) => f.properties);
+          .map((f: any) => ({
+            ...f.properties,
+            lng: f.geometry.coordinates[0],
+            lat: f.geometry.coordinates[1],
+          }));
+
+        if (route && route.geometry && route.geometry.coordinates) {
+          const routeCoords = route.geometry.coordinates;
+          
+          // Helper to find closest index on route coordinates
+          const getClosestIndexOnRoute = (wp: { lng: number; lat: number }) => {
+            let minDistance = Infinity;
+            let closestIndex = -1;
+            for (let i = 0; i < routeCoords.length; i++) {
+              const coord = routeCoords[i];
+              const dx = wp.lng - coord[0];
+              const dy = wp.lat - coord[1];
+              const dist = dx * dx + dy * dy;
+              if (dist < minDistance) {
+                minDistance = dist;
+                closestIndex = i;
+              }
+            }
+            return closestIndex;
+          };
+
+          // Sort waypoints based on closest index along LineString
+          wps.sort((a: any, b: any) => getClosestIndexOnRoute(a) - getClosestIndexOnRoute(b));
+        }
+
         setWaypoints(wps);
         setGeneralClaims(data.general_claims || []);
       }
@@ -122,6 +155,8 @@ export default function Home() {
     .map((wp) => ({
       name: wp.name,
       elevation: wp.elevation_m,
+      lat: wp.lat,
+      lng: wp.lng,
     }));
 
   // Render Sidebar content
@@ -228,6 +263,34 @@ export default function Home() {
                 <div style={{ fontSize: "14px", fontWeight: 700, color: "#f0ede6", marginTop: "2px" }}>{waypoints.length} Pos</div>
               </div>
             </div>
+
+            {/* Cinematic Preview Button */}
+            <button
+              onClick={() => setTriggerCinematic(Date.now())}
+              style={{
+                width: "100%",
+                marginTop: "16px",
+                padding: "10px 16px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 600,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                border: "1px solid rgba(229, 91, 60, 0.4)",
+                cursor: "pointer",
+                backgroundColor: "rgba(229, 91, 60, 0.08)",
+                color: "#F38165",
+                transition: "all 0.2s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.15)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "rgba(229, 91, 60, 0.08)";
+              }}
+            >
+              🎬 Preview Jalur 3D
+            </button>
           </div>
         ) : (
           <div style={{ marginTop: "8px" }}>
@@ -658,7 +721,86 @@ export default function Home() {
               fetchTrailInfo();
               fetchVerdict();
             }}
+            flyToTarget={flyToTarget}
+            triggerCinematic={triggerCinematic}
+            sortedWaypoints={waypoints}
           />
+
+          {/* Floating Elevation Scrubber Strip (Desktop only) */}
+          {!isMobile && elevationData.length > 1 && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: "24px",
+                left: "24px",
+                right: "220px", // clear map legend
+                height: "115px",
+                zIndex: 10,
+                backgroundColor: "rgba(17, 15, 13, 0.88)",
+                backdropFilter: "blur(12px)",
+                border: "1px solid rgba(240, 237, 230, 0.08)",
+                borderRadius: "4px",
+                padding: "12px 20px 8px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "9px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "rgba(240, 237, 230, 0.5)" }}>
+                  Navigasi Elevasi Rute (Klik Titik untuk Terbang)
+                </span>
+                <span style={{ fontSize: "9px", fontWeight: 700, color: "#E55B3C" }}>
+                  {trailMeta ? trailMeta.name : ""}
+                </span>
+              </div>
+              
+              <div style={{ width: "100%", height: "65px" }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart 
+                    data={elevationData} 
+                    margin={{ top: 5, right: 10, left: -25, bottom: 0 }}
+                    onClick={(data: any) => {
+                      if (data && data.activePayload && data.activePayload.length > 0) {
+                        const point = data.activePayload[0].payload;
+                        setFlyToTarget({ lng: point.lng, lat: point.lat, timestamp: Date.now() });
+                      }
+                    }}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <defs>
+                      <linearGradient id="colorElevationScrubber" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#E55B3C" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#E55B3C" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis 
+                      dataKey="name" 
+                      tick={{ fill: "rgba(240, 237, 230, 0.4)", fontSize: 8, fontFamily: "var(--font-sans)" }} 
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      domain={["dataMin - 100", "dataMax + 100"]}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "rgba(240, 237, 230, 0.3)", fontSize: 7 }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area
+                      type="monotone"
+                      dataKey="elevation"
+                      stroke="#E55B3C"
+                      strokeWidth={1.5}
+                      fillOpacity={1}
+                      fill="url(#colorElevationScrubber)"
+                      activeDot={{ r: 5, fill: "#F38165", stroke: "#110f0d", strokeWidth: 2 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* RESPONSIVE MOBILE BOTTOM SHEET DRAWER */}
